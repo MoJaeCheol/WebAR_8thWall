@@ -30,6 +30,7 @@ AFRAME.registerComponent('dora-experience', {
 
     document.querySelector('#btnReset').addEventListener('click', () => this.reset());
     document.querySelector('#btnSummon').addEventListener('click', () => this.summonInFront());
+    document.querySelector('#btnConvention').addEventListener('click', () => this.cycleConvention());
     document.querySelector('#btnLocalize').addEventListener('click', () => {
       this.setHint('VPS 측위 시도 중… 스캔했던 장소를 비춰줘');
       this.localizer && this.localizer.localizeOnce();
@@ -78,6 +79,8 @@ AFRAME.registerComponent('dora-experience', {
       },
     });
 
+    this.localizer.conventionIndex = cfg.poseConvention || 0;
+    document.querySelector('#convIdx').textContent = this.localizer.conventionIndex;
     this.localizer.attachPipeline(cfg.maxDimension);
     const ready = await this.localizer.checkServer();
     if (ready && cfg.autoLocalize) {
@@ -196,6 +199,14 @@ AFRAME.registerComponent('dora-experience', {
     this.hud.count.textContent = '0 / 0';
     this.setHint('바닥을 탭해서 어디로든 문을 놓아봐');
     Log.info('[app] 리셋됨');
+  },
+
+  /** 포즈 규약을 하나씩 돌려보며 실제 공간과 맞는 번호를 찾는다. 재측위 불필요. */
+  cycleConvention() {
+    if (!this.localizer) { this.setHint('VPS 가 아직 준비되지 않았어'); return; }
+    const name = this.localizer.setConvention(this.localizer.conventionIndex + 1);
+    document.querySelector('#convIdx').textContent = this.localizer.conventionIndex;
+    this.setHint(`정렬 규약 ${name} — 문 위치가 맞아?`);
   },
 
   // ── HUD ───────────────────────────────────────────────
