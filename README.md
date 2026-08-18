@@ -68,6 +68,28 @@ IMMERSAL_MAP_IDS=12345,67890
 
 토큰은 서버 프록시(`/api/immersal/localize`)에서만 쓰이고 브라우저로 내려가지 않는다.
 
+### 콘텐츠를 맵의 어느 자리에 세울지 (anchor)
+
+VPS 를 쓰는 목적은 "정해진 자리에 항상 같은 게 보이는 것" 이다.
+`config.js` 의 `immersal.anchor` 가 그 자리를 정한다 — **맵 좌표계** 기준이고,
+원점 `(0,0,0)` 은 스캔을 시작한 지점이다.
+
+```js
+anchor: { enabled: true, position: {x: 0, y: 0, z: 0}, rotationY: 0 }
+```
+
+원하는 자리를 찾는 방법:
+
+1. 현장에서 측위를 성공시킨다
+2. 바닥을 탭해서 문을 원하는 위치로 옮긴다
+3. 로그의 `배치 좌표(맵 기준): {x: …, y: …, z: …}` 값을 `anchor.position` 에 옮겨 적는다
+
+이후로는 측위만 성공하면 그 자리에 자동으로 나타난다.
+
+> ⚠ 콘텐츠는 전부 `#contentRoot` 아래에 있고, 측위가 성공하면 이 루트에 변환이 걸린다.
+> 그래서 월드 좌표를 자식 엔티티의 position 에 그대로 넣으면 안 된다.
+> `placeDoor()` 가 `worldToLocal()` 로 변환해주니, 새 콘텐츠를 추가할 때도 같은 방식을 쓸 것.
+
 ### 좌표계 캘리브레이션 (현장에서 확인할 것)
 
 `public/js/immersal.js` 의 `CV_TO_GL` 이 Immersal(OpenCV 규약)→three.js 변환을 담당한다.
