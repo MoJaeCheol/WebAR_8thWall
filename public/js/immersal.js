@@ -130,13 +130,16 @@
         const ms = Math.round(performance.now() - t0);
 
         if (!res.ok || json.success === false || (json.error && json.error !== 'none')) {
-          Log.warn(`[immersal] 측위 실패(${this.attempts}회, ${ms}ms): ${json.error || res.status}`);
+          // error:'none' + success:false = 요청은 정상이나 맵과 매칭 실패 (각도/조명/거리 문제)
+          const why = json.error && json.error !== 'none' ? json.error
+            : (json.success === false ? '맵과 매칭 안 됨' : res.status);
+          Log.warn(`[immersal] 측위 실패(${this.attempts}회, ${ms}ms): ${why}`);
           this.onStatus('fail');
           return false;
         }
 
         this._applyPose(json, snapshot);
-        Log.info(`[immersal] 측위 성공! map=${json.map} (${ms}ms, ${cols}x${rows})`);
+        Log.info(`[immersal] 측위 성공! map=${json.map} conf=${json.confidence ?? '-'} (${ms}ms, ${cols}x${rows})`);
         this.localized = true;
         this.onStatus('ok');
         this.stopAuto();
