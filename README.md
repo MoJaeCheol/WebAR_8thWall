@@ -90,6 +90,30 @@ anchor: { enabled: true, position: {x: 0, y: 0, z: 0}, rotationY: 0 }
 > 그래서 월드 좌표를 자식 엔티티의 position 에 그대로 넣으면 안 된다.
 > `placeDoor()` 가 `worldToLocal()` 로 변환해주니, 새 콘텐츠를 추가할 때도 같은 방식을 쓸 것.
 
+### 스케일은 반드시 absolute (놓치기 쉬움)
+
+`xrweb` 의 기본 스케일은 `responsive` 로, **미터가 아니라** "1프레임 카메라를 원점으로 한
+정규화 좌표" 를 돌려준다. Immersal 맵은 실제 미터 기준이라 이 상태로 합성하면
+스케일이 어긋나 정렬이 틀어진다. 증상이 헷갈리는데, **탭 배치는 멀쩡한데 VPS 정렬만
+어긋나고 거리가 멀수록 오차가 커지면** 이걸 의심할 것.
+
+```html
+<a-scene xrweb="allowedDevices: any; scale: absolute">
+```
+
+`experience.js` 에서 `XR8.XrController.configure({scale: 'absolute'})` 로 한 번 더 확정한다.
+
+### 맵 원점 마커
+
+`debug: true` 면 측위 성공 시 맵 좌표계 원점(0,0,0)에 축 기즈모가 뜬다 (X 빨강 / Y 초록 / Z 파랑).
+
+**맵 원점은 스캔을 시작한 지점이 아니다.** 재구성 솔버가 정한 임의의 지점이라
+벽 속이나 공중일 수도 있다. 콘텐츠가 엉뚱한 데 있을 때, 정렬이 틀린 건지
+원점이 원래 거기인 건지를 이 마커로 가른다.
+
+- 마커가 **실제 공간에 딱 붙어서 안 흔들리면** → 정렬은 정상. `anchor.position` 만 옮기면 된다
+- 마커가 **걸을 때마다 미끄러지거나 엉뚱한 데 있으면** → 정렬 문제
+
 ### 좌표계 정렬 보정 (현장에서 30초)
 
 Immersal 응답은 문서상 **오른손 좌표계 · ARKit 중력 정렬(Y 위)** 의 camera-to-map 포즈다.

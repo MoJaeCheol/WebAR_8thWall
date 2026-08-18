@@ -79,6 +79,16 @@ AFRAME.registerComponent('dora-experience', {
       },
     });
 
+    // 스케일을 미터로 확정한다.
+    // xrweb 의 기본값 responsive 는 "1프레임 카메라 기준 정규화 좌표"라 미터가 아니고,
+    // 실제 미터로 만들어진 Immersal 맵과 합성하면 스케일이 어긋난다.
+    try {
+      XR8.XrController.configure({scale: 'absolute'});
+      Log.info('[8thwall] scale = absolute (미터 단위)');
+    } catch (e) {
+      Log.warn('[8thwall] scale 설정 실패:', e.message);
+    }
+
     this.localizer.conventionIndex = cfg.poseConvention || 0;
     document.querySelector('#convIdx').textContent = this.localizer.conventionIndex;
     this.localizer.attachPipeline(cfg.maxDimension);
@@ -89,7 +99,39 @@ AFRAME.registerComponent('dora-experience', {
   },
 
   // ── 배치 ──────────────────────────────────────────────
+  /**
+   * 맵 좌표계 원점(0,0,0)에 축 기즈모를 세운다.
+   * 맵 원점은 스캔 시작점이 아니라 재구성 솔버가 정한 임의의 지점이라,
+   * "콘텐츠가 이상한 곳에 있다" 가 정렬 오류인지 원점 위치 탓인지 눈으로 가른다.
+   */
+  showOriginMarker() {
+    if (this.originMarker) return;
+    const g = document.createElement('a-entity');
+    const axis = (color, rot) => {
+      const c = document.createElement('a-cylinder');
+      c.setAttribute('radius', 0.012);
+      c.setAttribute('height', 0.5);
+      c.setAttribute('position', '0 0.25 0');
+      c.setAttribute('material', `shader: flat; color: ${color}`);
+      const pivot = document.createElement('a-entity');
+      pivot.setAttribute('rotation', rot);
+      pivot.appendChild(c);
+      return pivot;
+    };
+    g.appendChild(axis('#ff4444', '0 0 -90'));  // X
+    g.appendChild(axis('#44ff44', '0 0 0'));    // Y
+    g.appendChild(axis('#4488ff', '90 0 0'));   // Z
+    const dot = document.createElement('a-sphere');
+    dot.setAttribute('radius', 0.05);
+    dot.setAttribute('material', 'shader: flat; color: #ffffff');
+    g.appendChild(dot);
+    this.root.appendChild(g);
+    this.originMarker = g;
+    Log.info('[app] 맵 원점 마커 표시 (X 빨강 / Y 초록 / Z 파랑)');
+  },
+
   onLocalized() {
+    if (this.cfg.debug) this.showOriginMarker();
     const anchor = this.cfg.immersal.anchor;
     if (anchor && anchor.enabled && !this.door) {
       const q = new THREE.Quaternion().setFromEuler(
@@ -194,6 +236,7 @@ AFRAME.registerComponent('dora-experience', {
   reset() {
     while (this.root.firstChild) this.root.removeChild(this.root.firstChild);
     this.door = null;
+    this.originMarker = null;
     this.count = 0;
     this.total = 0;
     this.hud.count.textContent = '0 / 0';
