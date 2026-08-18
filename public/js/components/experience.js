@@ -89,8 +89,11 @@ AFRAME.registerComponent('dora-experience', {
       Log.warn('[8thwall] scale 설정 실패:', e.message);
     }
 
-    this.localizer.conventionIndex = cfg.poseConvention || 0;
-    document.querySelector('#convIdx').textContent = this.localizer.conventionIndex;
+    const conv = cfg.poseConvention;
+    this.localizer.autoConvention = (conv === 'auto' || conv === undefined);
+    this.localizer.conventionIndex = this.localizer.autoConvention ? 0 : conv;
+    this.localizer.gravityLock = cfg.gravityLock !== false;
+    document.querySelector('#convIdx').textContent = this.localizer.autoConvention ? '자동' : conv;
     this.localizer.attachPipeline(cfg.maxDimension);
     const ready = await this.localizer.checkServer();
     if (ready && cfg.autoLocalize) {

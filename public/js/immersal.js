@@ -48,12 +48,15 @@
       this.timer = null;
       this.serverReady = false;
       this.conventionIndex = 0;   // 현재 적용 중인 포즈 규약
+      this.autoConvention = true; // 중력 정렬 기준으로 규약 자동 선택
+      this.gravityLock = true;    // 남은 pitch/roll 을 버리고 yaw 만 사용
       this.lastResponse = null;   // 마지막 성공 응답 (규약 전환 시 재적용용)
       this.lastSnapshot = null;
     }
 
     /** 규약을 바꿔 저장된 마지막 응답으로 즉시 재정렬한다 (재측위 불필요). */
     setConvention(i) {
+      this.autoConvention = false;   // 손으로 고른 순간부터는 자동 선택을 멈춘다
       this.conventionIndex = ((i % CONVENTIONS.length) + CONVENTIONS.length) % CONVENTIONS.length;
       const c = CONVENTIONS[this.conventionIndex];
       if (this.lastResponse) {
@@ -201,14 +204,10 @@
      * @param {object} r  Immersal 응답 (px,py,pz, r00..r22)
      * @param {object} snap  요청 시점의 SLAM 카메라 포즈
      */
-    _applyPose(r, snap) {
-      if (!snap) { Log.warn('[immersal] SLAM 포즈 스냅샷 없음 — 정렬 생략'); return; }
-      this.lastResponse = r;
-      this.lastSnapshot = snap;
+    /** 규약 i 로 T_track_map 을 계산해 돌려준다 (적용은 하지 않음). */
+    _computeRootTransform(r, snap, i) {
+      const c = CONVENTIONS[i];
 
-      const c = CONVENTIONS[this.conventionIndex];
-
-      // 응답의 3x3 회전 + 위치. transpose 는 행/열 해석 차이를 흡수한다.
       const M = new THREE.Matrix4();
       if (c.transpose) {
         M.set(r.r00, r.r10, r.r20, r.px,
@@ -222,28 +221,73 @@
               0, 0, 0, 1);
       }
 
-      // T_map_cam = pre · M · post
-      let T_map_cam = new THREE.Matrix4()
-        .multiplyMatrices(c.pre, M)
-        .multiply(c.post);
+      let T_map_cam = new THREE.Matrix4().multiplyMatrices(c.pre, M).multiply(c.post);
       if (c.invert) T_map_cam = T_map_cam.clone().invert();
 
       const T_cam_map = new THREE.Matrix4().copy(T_map_cam).invert();
-
-      // T_track_cam : SLAM 트래킹 공간에서의 카메라 포즈
       const T_track_cam = new THREE.Matrix4().compose(
         new THREE.Vector3(snap.position.x, snap.position.y, snap.position.z),
         new THREE.Quaternion(snap.rotation.x, snap.rotation.y, snap.rotation.z, snap.rotation.w),
         new THREE.Vector3(1, 1, 1)
       );
+      return T_track_cam.multiply(T_cam_map);
+    }
 
-      // T_track_map = T_track_cam · T_cam_map
-      const T_track_map = T_track_cam.multiply(T_cam_map);
+    /**
+     * 규약별로 "중력 어긋남" 을 재서 정답을 고른다.
+     *
+     * Immersal 맵과 8th Wall SLAM 은 둘 다 중력 정렬(Y 위)이다.
+     * 따라서 올바른 맵→트래킹 변환은 Y축 회전(yaw)만 있어야 하고 기울기는 0 이어야 한다.
+     * 규약이 틀리면 여기에 큰 기울기가 생기므로, 기울기가 가장 작은 후보가 정답이다.
+     */
+    _evaluateConventions(r, snap) {
+      const UP = new THREE.Vector3(0, 1, 0);
+      const out = [];
+      for (let i = 0; i < CONVENTIONS.length; i++) {
+        const T = this._computeRootTransform(r, snap, i);
+        const p = new THREE.Vector3();
+        const q = new THREE.Quaternion();
+        const sc = new THREE.Vector3();
+        T.decompose(p, q, sc);
+        const tilt = UP.clone().applyQuaternion(q).angleTo(UP) * 180 / Math.PI;
+        out.push({index: i, name: CONVENTIONS[i].name, tilt, pos: p});
+      }
+      return out;
+    }
+
+    _applyPose(r, snap) {
+      if (!snap) { Log.warn('[immersal] SLAM 포즈 스냅샷 없음 — 정렬 생략'); return; }
+      this.lastResponse = r;
+      this.lastSnapshot = snap;
+
+      // 자동 모드: 중력 어긋남이 가장 작은 규약을 고른다.
+      if (this.autoConvention) {
+        const evals = this._evaluateConventions(r, snap);
+        evals.forEach((e) => Log.info(`[immersal]   후보 ${e.name} 기울기 ${e.tilt.toFixed(1)}°`));
+        const best = evals.reduce((a, b) => (b.tilt < a.tilt ? b : a));
+        if (this.conventionIndex !== best.index) {
+          Log.info(`[immersal] 규약 자동 선택 → ${best.name} (기울기 ${best.tilt.toFixed(1)}°)`);
+        }
+        this.conventionIndex = best.index;
+      }
+
+      const c = CONVENTIONS[this.conventionIndex];
+      const T_track_map = this._computeRootTransform(r, snap, this.conventionIndex);
 
       const pos = new THREE.Vector3();
       const quat = new THREE.Quaternion();
       const scl = new THREE.Vector3();
       T_track_map.decompose(pos, quat, scl);
+
+      // 중력 잠금: 남은 pitch/roll 을 버리고 yaw 만 남긴다.
+      // 두 좌표계 모두 중력 정렬이므로 기울기는 오차일 뿐이고, 버리면 더 안정적이다.
+      const UP = new THREE.Vector3(0, 1, 0);
+      const tilt = UP.clone().applyQuaternion(quat).angleTo(UP) * 180 / Math.PI;
+      if (this.gravityLock) {
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+        const yaw = Math.atan2(-fwd.x, -fwd.z);
+        quat.setFromEuler(new THREE.Euler(0, yaw, 0));
+      }
 
       const o = this.rootEl.object3D;
       o.position.copy(pos);
@@ -251,15 +295,17 @@
       o.updateMatrixWorld(true);
 
       const f = (n) => n.toFixed(2);
-      Log.info(`[immersal] 규약 ${c.name} → 루트 pos(${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)})`);
+      Log.info(`[immersal] ${c.name} → 루트 pos(${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)}) 기울기 ${tilt.toFixed(1)}°${this.gravityLock ? ' (중력잠금 적용)' : ''}`);
+      if (tilt > 15) {
+        Log.warn(`[immersal] ⚠ 기울기 ${tilt.toFixed(0)}° — 규약이 여전히 틀렸을 수 있어`);
+      }
 
       // 자체 검증: 카메라를 맵 좌표계로 되돌리면 응답의 (px,py,pz) 와 같아야 한다.
-      // 여기서 어긋나면 규약이 아니라 계산 자체가 틀린 것이다.
       const camInMap = o.worldToLocal(
         new THREE.Vector3(snap.position.x, snap.position.y, snap.position.z)
       );
       const drift = camInMap.distanceTo(new THREE.Vector3(r.px, r.py, r.pz));
-      Log.info(`[immersal] 자체검증 오차 ${drift.toFixed(3)}m ${drift < 0.01 ? '(정상)' : '(⚠ 계산 오류 의심)'}`);
+      Log.info(`[immersal] 자체검증 오차 ${drift.toFixed(3)}m ${drift < 0.05 ? '(정상)' : '(⚠ 확인 필요)'}`);
     }
 
     startAuto({intervalMs, maxAttempts}) {
