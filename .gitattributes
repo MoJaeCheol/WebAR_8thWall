@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.min.js -text
+*.glb  binary
+*.png  binary
+*.jpg  binary
+*.mp4  binary

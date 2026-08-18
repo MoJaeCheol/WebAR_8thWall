@@ -1,0 +1,17 @@
+{
+  "name": "ar-8th-doraemon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "8th Wall + Immersal 기반 로컬 WebAR 프로토타입 (도라에몽 테마)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "cert": "node server.js --cert-only"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

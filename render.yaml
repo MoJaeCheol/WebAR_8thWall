@@ -1,0 +1,19 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ar-8th-doraemon
+    runtime: node
+    plan: free
+    region: singapore          # 한국에서 가장 가까운 리전
+    buildCommand: npm ci
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # 아래 두 개는 Render 대시보드에서 직접 입력한다 (sync: false = blueprint 에 값 저장 안 함)
+      - key: IMMERSAL_TOKEN
+        sync: false
+      - key: IMMERSAL_MAP_IDS
+        sync: false

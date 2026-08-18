@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>어디로든 문 AR — 8th Wall + Immersal</title>
+  <link rel="stylesheet" href="css/style.css">
+
+  <!-- 8th Wall (2026-02 오픈소스 전환 이후 App Key 불필요) -->
+  <script crossorigin="anonymous" src="./external/scripts/8frame-1.5.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/landing-page@1/dist/landing-page.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" crossorigin="anonymous" async data-preload-chunks="slam"></script>
+
+  <!-- 프로젝트 코드 (a-scene 파싱 전에 컴포넌트 등록이 끝나야 한다) -->
+  <script src="js/config.js"></script>
+  <script src="js/logger.js"></script>
+  <script src="js/textures.js"></script>
+  <script src="js/png.js"></script>
+  <script src="js/immersal.js"></script>
+  <script src="js/components/anywhere-door.js"></script>
+  <script src="js/components/collectible.js"></script>
+  <script src="js/components/experience.js"></script>
+  <script src="js/app.js"></script>
+</head>
+
+<body>
+
+<!-- ── 시작 화면 ─────────────────────────────────────── -->
+<div id="loader">
+  <div class="bell"></div>
+  <h1>어디로든 문 AR</h1>
+  <p>
+    카메라를 켜고 바닥을 천천히 비춰줘.<br>
+    바닥을 탭하면 문이 나타나!
+  </p>
+  <button id="startBtn">AR 시작하기</button>
+</div>
+
+<!-- ── HUD ──────────────────────────────────────────── -->
+<div id="hud">
+  <div class="hud-top">
+    <div class="chip"><span id="dotTracking" class="dot pending"></span><span id="textTracking">트래킹 준비 중</span></div>
+    <div class="chip"><span id="dotVps" class="dot"></span><span id="textVps">VPS 확인 중</span></div>
+  </div>
+  <div class="hud-bottom">
+    <div id="hint">카메라를 준비하는 중…</div>
+    <div class="btn-row">
+      <button class="btn" id="btnReset">리셋</button>
+      <button class="btn primary" id="btnLocalize">VPS 측위</button>
+      <div class="chip" style="pointer-events:none"><span>🔔</span><span id="count">0 / 0</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="log"></div>
+
+<!-- ── AR 씬 ────────────────────────────────────────── -->
+<a-scene
+  dora-experience
+  landing-page
+  xrextras-loading
+  xrextras-runtime-error
+  renderer="colorManagement: true"
+  vr-mode-ui="enabled: false"
+  xrweb="allowedDevices: any">
+
+  <!-- 카메라를 사람 눈높이(1.6)에 두면 responsive 스케일에서 1 unit ≈ 1m 로 맞는다 -->
+  <a-camera
+    id="camera"
+    position="0 1.6 0"
+    raycaster="objects: .cantap"
+    cursor="fuse: false; rayOrigin: mouse">
+  </a-camera>
+
+  <a-entity
+    light="type: directional; intensity: 0.9; castShadow: true;
+           shadowMapWidth: 2048; shadowMapHeight: 2048;
+           shadowCameraTop: 12; shadowCameraBottom: -12;
+           shadowCameraRight: 12; shadowCameraLeft: -12;
+           target: #camera"
+    xrextras-attach="target: camera; offset: 3 6 2"
+    position="1 4 2"
+    shadow>
+  </a-entity>
+  <a-light type="ambient" intensity="0.65"></a-light>
+
+  <!-- 그림자만 받는 바닥. 탭 레이캐스트 대상이기도 하다. -->
+  <a-box
+    id="ground"
+    class="cantap"
+    scale="200 2 200"
+    position="0 -1 0"
+    material="shader: shadow; transparent: true; opacity: 0.32"
+    shadow>
+  </a-box>
+
+  <!-- 모든 콘텐츠는 이 루트 아래에 들어간다.
+       Immersal 측위가 성공하면 이 루트의 transform 이 실제 공간 기준으로 정렬된다. -->
+  <a-entity id="contentRoot"></a-entity>
+
+</a-scene>
+
+</body>
+</html>
