@@ -16,6 +16,10 @@ const { execFileSync } = require('child_process');
 const IS_PROD = Boolean(process.env.RENDER || process.env.NODE_ENV === 'production');
 const PORT = Number(process.env.PORT || 3000);
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || 3443);
+// 배포마다 바뀌는 값. 정적 자산 URL 에 붙여 브라우저 캐시를 확실히 무효화한다.
+// (Cache-Control 만으로는 이미 캐시된 응답을 되돌릴 수 없다)
+const BUILD_ID = Date.now().toString(36);
+
 const CERT_DIR = path.join(__dirname, 'certs');
 const KEY_FILE = path.join(CERT_DIR, 'dev-key.pem');
 const CRT_FILE = path.join(CERT_DIR, 'dev-cert.pem');
@@ -69,7 +73,25 @@ function ensureCert() {
 const app = express();
 app.use(express.json({ limit: '12mb' })); // base64 이미지 업로드용
 
+/**
+ * index.html 은 정적 서빙 대신 여기서 처리한다.
+ * css/js 경로에 ?v=BUILD_ID 를 붙여, 배포가 바뀌면 브라우저가 반드시 새로 받게 한다.
+ */
+function sendIndex(req, res) {
+  try {
+    let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+    html = html.replace(/(src|href)="((?:css|js)\/[^"?]+)"/g, `$1="$2?v=${BUILD_ID}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(html);
+  } catch (e) {
+    res.status(500).send('index.html 을 읽을 수 없습니다: ' + e.message);
+  }
+}
+app.get('/', sendIndex);
+app.get('/index.html', sendIndex);
+
 app.use(express.static(path.join(__dirname, 'public'), {
+  index: false,   // index.html 은 위 핸들러가 담당
   // 개발 중에는 캐시를 끄고, 프로덕션에서는 8frame(1.4MB) 등이 재다운로드되지 않게 캐싱한다.
   etag: true,
   maxAge: 0,
@@ -93,6 +115,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
  */
 app.get('/api/config', (req, res) => {
   res.json({
+    buildId: BUILD_ID,
     immersalConfigured: Boolean(process.env.IMMERSAL_TOKEN && process.env.IMMERSAL_MAP_IDS),
     mapIds: (process.env.IMMERSAL_MAP_IDS || '')
       .split(',')
@@ -193,8 +216,6 @@ app.post('/api/anchor/:mapId', (req, res) => {
   }
   res.json({ ok: true, anchor: doc.anchors[mapId] });
 });
-
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // --- 헬스체크 (Render 가 서비스 상태를 확인한다) ---
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
