@@ -191,6 +191,45 @@ app.get('/api/anchor/:mapId', (req, res) => {
   res.json(a ? { found: true, anchor: a } : { found: false, anchor: null });
 });
 
+// ── 맵 포인트 클라우드 중계 ────────────────────────────────
+// 맵의 특징점을 AR 로 겹쳐 보면 맵 품질과 정렬을 눈으로 동시에 검증할 수 있다.
+const pointCloudCache = new Map();
+
+app.get('/api/map/:mapId/pointcloud', async (req, res) => {
+  const token = process.env.IMMERSAL_TOKEN;
+  if (!token) return res.status(503).json({error: 'not-configured'});
+
+  const mapId = String(req.params.mapId);
+  if (pointCloudCache.has(mapId)) {
+    res.type('application/octet-stream');
+    return res.send(pointCloudCache.get(mapId));
+  }
+
+  try {
+    const url = `https://api.immersal.com/sparse?token=${encodeURIComponent(token)}&id=${encodeURIComponent(mapId)}`;
+    const r = await fetch(url);
+    if (!r.ok) return res.status(r.status).json({error: 'upstream', status: r.status});
+    const buf = Buffer.from(await r.arrayBuffer());
+    pointCloudCache.set(mapId, buf);
+    console.log(`[map] ${mapId} 포인트클라우드 ${buf.length} bytes 캐시됨`);
+    res.type('application/octet-stream').send(buf);
+  } catch (e) {
+    console.error('[map] 포인트클라우드 실패:', e.message);
+    res.status(502).json({error: 'upstream-failed', message: e.message});
+  }
+});
+
+/** 앵커 삭제 (개발자 모드에서 배치를 취소할 때) */
+app.delete('/api/anchor/:mapId', (req, res) => {
+  const doc = readAnchors();
+  const mapId = String(req.params.mapId);
+  const had = Boolean(doc.anchors[mapId]);
+  delete doc.anchors[mapId];
+  writeAnchors(doc);
+  console.log(`[anchor] map ${mapId} 삭제됨 (있었나: ${had})`);
+  res.json({ok: true, deleted: had});
+});
+
 /** 전체 앵커 덤프 — 재배포 후에도 유지하려면 이 내용을 data/anchors.json 에 커밋한다. */
 app.get('/api/anchors', (req, res) => res.json(readAnchors()));
 

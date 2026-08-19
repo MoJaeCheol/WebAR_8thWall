@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetch('/api/config').then((r) => r.json()).then((j) => {
     const same = clientV === j.buildId;
     Log.info(`[app] build ${clientV} / 서버 ${j.buildId} ${same ? '(최신)' : '(⚠ 캐시된 옛 파일 — 새로고침 필요)'}`);
-    const el = document.querySelector('#buildTag');
+    const el = document.querySelector('#devBuild');
     if (el) el.textContent = same ? `build ${j.buildId}` : `⚠ 캐시 ${clientV}≠${j.buildId}`;
   }).catch(() => {});
   if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {

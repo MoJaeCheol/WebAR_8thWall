@@ -1,69 +1,48 @@
 /**
- * 체험 전체 흐름 관리 — 배치 / 수집 / HUD / VPS 연동.
- * a-scene 에 붙인다.
+ * 체험 전체 흐름 — 관람 모드 / 개발자 모드.
+ *
+ * 관람 모드 (기본)
+ *   - 아무것도 배치하지 않는다. 개발자가 저장해 둔 위치가 있을 때만 그 자리에 세운다.
+ *   - 바닥을 탭해도 반응하지 않는다. "누가 와도 같은 자리" 가 VPS 의 요점이기 때문이다.
+ *
+ * 개발자 모드 (우상단 ⚙)
+ *   - 맵 검증: 특징점 겹쳐 보기, 측위 성공률, 스케일·일치오차 진단
+ *   - 문 위치 지정: 바닥 탭으로 이동, 15도 단위 회전, 저장/삭제
  */
-const MIN_BASELINE_HINT = '1m 이상 걸어가서 다시 측위 필요';
-
 AFRAME.registerComponent('dora-experience', {
   init() {
-    const CFG = window.AR_CONFIG;
-    this.cfg = CFG;
+    this.cfg = window.AR_CONFIG;
     this.count = 0;
+    this.total = 0;
     this.door = null;
-
-    this.hud = {
-      tracking: document.querySelector('#dotTracking'),
-      trackingText: document.querySelector('#textTracking'),
-      vps: document.querySelector('#dotVps'),
-      vpsText: document.querySelector('#textVps'),
-      hint: document.querySelector('#hint'),
-      count: document.querySelector('#count'),
-    };
+    this.doorYaw = 0;
+    this.savedAnchor = null;
+    this.localizedMapId = null;
+    this.pointCloud = null;
 
     this.root = document.querySelector('#contentRoot');
     this.ground = document.querySelector('#ground');
 
-    // 저작 모드에서만 탭으로 옮길 수 있다. 관람 모드는 저장된 자리에 고정.
-    this.editMode = new URLSearchParams(location.search).get('edit') === '1';
-    this.ground.addEventListener('click', (e) => {
-      if (!this.editMode) return;
-      this.placeDoor(e.detail.intersection.point);
-    });
-    if (this.cfg.debug) {
-      // 렌더 루프(tick)에 걸면 루프가 멈췄을 때 계측도 같이 멈춰 이상 신호를 놓친다.
-      setInterval(() => this.updateReadout(), 250);
-    }
-    if (this.editMode) {
-      document.body.classList.add('edit-mode');
-      Log.info('[app] 저작 모드 — 배치 후 저장하면 모든 접속자에게 적용된다');
-    }
     this.el.addEventListener('item-collected', (e) => this.onCollect(e.detail.type));
-
-    // 측위 성공 시 맵 좌표에 콘텐츠를 세운다 (VPS 를 쓰는 본래 목적).
-    // initImmersal() 안이 아니라 여기에 두어야 카메라 초기화 순서와 무관하게 항상 등록된다.
     this.root.addEventListener('immersal-localized', (e) => {
       const resp = e.detail && e.detail.response;
       this.localizedMapId = resp && resp.map;
       this.onLocalized(resp);
     });
 
-    document.querySelector('#btnReset').addEventListener('click', () => this.reset());
-    document.querySelector('#btnSummon').addEventListener('click', () => this.summonInFront());
-    document.querySelector('#btnConvention').addEventListener('click', () => this.cycleConvention());
-    document.querySelector('#btnRotL').addEventListener('click', () => this.rotateDoor(-15));
-    document.querySelector('#btnRotR').addEventListener('click', () => this.rotateDoor(15));
-    document.querySelector('#btnSave').addEventListener('click', () => this.saveAnchor());
-    document.querySelector('#btnLocalize').addEventListener('click', () => {
-      this.setHint('VPS 측위 시도 중… 스캔했던 장소를 비춰줘');
-      this.localizer && this.localizer.localizeOnce();
+    // 바닥 탭은 개발자 모드에서만 동작한다.
+    this.ground.addEventListener('click', (e) => {
+      if (!this.devMode) return;
+      this.placeDoor(e.detail.intersection.point);
     });
 
-    // ── 8th Wall 트래킹 상태 ────────────────────────────
+    this.bindDevUI();
+    this.setDevMode(localStorage.getItem('devMode') === '1');
+    setInterval(() => this.updateDevReadout(), 300);
+
     this.el.addEventListener('realityready', () => {
       this.setTracking('ok', '트래킹 준비됨');
-      this.setHint(this.editMode
-        ? '저작 모드 — 측위되면 바닥을 탭해 문을 놓고 저장해줘'
-        : '주변을 천천히 비춰줘. 위치가 인식되면 문이 나타나');
+      this.setHint('주변을 천천히 비춰줘. 위치가 인식되면 문이 나타나');
       this.initImmersal();
     });
     this.el.addEventListener('xrtrackingstatus', (e) => {
@@ -78,6 +57,84 @@ AFRAME.registerComponent('dora-experience', {
     });
   },
 
+  // ── 개발자 모드 ────────────────────────────────────────
+  bindDevUI() {
+    const $ = (s) => document.querySelector(s);
+    $('#devBtn').addEventListener('click', () => this.setDevMode(!this.devMode));
+    $('#devCollapse').addEventListener('click', () => {
+      const c = document.body.classList.toggle('dev-collapsed');
+      $('#devCollapse').textContent = c ? '▼' : '▲';
+    });
+    $('#devRotL').addEventListener('click', () => this.rotateDoor(-15));
+    $('#devRotR').addEventListener('click', () => this.rotateDoor(15));
+    $('#devSave').addEventListener('click', () => this.saveAnchor());
+    $('#devDelete').addEventListener('click', () => this.deleteAnchor());
+    $('#devTogglePoints').addEventListener('click', () => this.togglePointCloud());
+    $('#devToggleLog').addEventListener('click', () => {
+      const on = document.querySelector('#log').classList.toggle('on');
+      $('#devToggleLog').classList.toggle('active', on);
+      $('#devToggleLog').textContent = on ? '로그 닫기' : '로그 보기';
+    });
+    $('#devCycleConv').addEventListener('click', () => {
+      if (!this.localizer) return;
+      const name = this.localizer.setConvention(this.localizer.conventionIndex + 1);
+      Log.info('[dev] 규약 수동 변경 →', name);
+    });
+  },
+
+  setDevMode(on) {
+    this.devMode = on;
+    document.body.classList.toggle('dev-mode', on);
+    localStorage.setItem('devMode', on ? '1' : '0');
+    if (on) {
+      this.setHint('개발자 모드 — 바닥을 탭해 문 위치를 정하고 저장하세요');
+    } else {
+      document.querySelector('#log').classList.remove('on');
+      this.setHint(this.savedAnchor ? '문을 탭하면 열려' : '아직 문 위치가 지정되지 않았어');
+    }
+  },
+
+  async togglePointCloud() {
+    const btn = document.querySelector('#devTogglePoints');
+    if (this.pointCloud) {
+      const vis = !this.pointCloud.getAttribute('visible');
+      this.pointCloud.setAttribute('visible', vis);
+      btn.classList.toggle('active', vis);
+      btn.textContent = vis ? '맵 특징점 숨기기' : '맵 특징점 겹쳐 보기';
+      return;
+    }
+    if (!this.localizedMapId) { this.setHint('측위가 성공해야 맵을 겹쳐 볼 수 있어'); return; }
+
+    btn.textContent = '불러오는 중…';
+    try {
+      const res = await fetch(`/api/map/${this.localizedMapId}/pointcloud`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const {count, positions, colors} = window.PLY.parse(await res.arrayBuffer());
+
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      if (colors) geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      const mat = new THREE.PointsMaterial({
+        size: 0.03, sizeAttenuation: true,
+        vertexColors: Boolean(colors), color: colors ? 0xffffff : 0x00e5ff,
+      });
+
+      const el = document.createElement('a-entity');
+      this.root.appendChild(el);
+      el.setObject3D('mesh', new THREE.Points(geom, mat));
+      this.pointCloud = el;
+
+      document.querySelector('#devPoints').textContent = `${count.toLocaleString()}개`;
+      btn.classList.add('active');
+      btn.textContent = '맵 특징점 숨기기';
+      Log.info(`[map] 특징점 ${count}개 표시`);
+      this.setHint('점들이 실제 공간과 겹쳐 보이면 맵과 정렬이 모두 정상이야');
+    } catch (e) {
+      btn.textContent = '맵 특징점 겹쳐 보기';
+      Log.error('[map] 포인트클라우드 실패:', e.message);
+    }
+  },
+
   // ── Immersal ──────────────────────────────────────────
   async initImmersal() {
     const cfg = this.cfg.immersal;
@@ -88,16 +145,17 @@ AFRAME.registerComponent('dora-experience', {
       return;
     }
 
+    const sceneScale = (this.el.getAttribute('xrweb') || {}).scale;
+    Log.info(`[8thwall] scale = ${sceneScale}${sceneScale === 'absolute' ? ' (미터 단위)' : ' — absolute 여야 함'}`);
+
     this.localizer = new window.ImmersalLocalizer({
       rootEl: this.root,
       cameraEl: this.el.camera.el,
       onDiagnostics: (d) => this.showDiagnostics(d),
       onStatus: (s) => {
         const map = {
-          idle:     ['warn', 'VPS 대기'],
-          pending:  ['pending', 'VPS 측위 중'],
-          ok:       ['ok', 'VPS 정렬됨'],
-          fail:     ['warn', 'VPS 재시도'],
+          idle: ['warn', 'VPS 대기'], pending: ['pending', 'VPS 측위 중'],
+          ok: ['ok', 'VPS 정렬됨'], fail: ['warn', 'VPS 재시도'],
           disabled: ['', 'VPS 미설정'],
         };
         const [dot, text] = map[s] || ['', 'VPS'];
@@ -105,18 +163,12 @@ AFRAME.registerComponent('dora-experience', {
       },
     });
 
-    // 스케일(absolute)은 index.html 의 xrweb 속성에서 이미 설정된다.
-    // 여기서 XrController.configure() 를 또 부르면 xrweb 이 넣어둔 다른 설정을
-    // 덮어쓸 수 있어 호출하지 않는다. 실제 적용값만 확인해 로그로 남긴다.
-    const sceneScale = (this.el.getAttribute('xrweb') || {}).scale;
-    Log.info(`[8thwall] scale = ${sceneScale}${sceneScale === 'absolute' ? ' (미터 단위)' : ' ⚠ absolute 여야 함'}`);
-
     const conv = cfg.poseConvention;
     this.localizer.autoConvention = (conv === 'auto' || conv === undefined);
     this.localizer.conventionIndex = this.localizer.autoConvention ? 0 : conv;
     this.localizer.gravityLock = cfg.gravityLock !== false;
-    document.querySelector('#convIdx').textContent = this.localizer.autoConvention ? '자동' : conv;
     this.localizer.attachPipeline(cfg.maxDimension);
+
     const ready = await this.localizer.checkServer();
     if (ready && cfg.autoLocalize) {
       this.localizer.startAuto({
@@ -127,92 +179,41 @@ AFRAME.registerComponent('dora-experience', {
     }
   },
 
-  // ── 배치 ──────────────────────────────────────────────
-  /**
-   * 맵 좌표계 원점(0,0,0)에 축 기즈모를 세운다.
-   * 맵 원점은 스캔 시작점이 아니라 재구성 솔버가 정한 임의의 지점이라,
-   * "콘텐츠가 이상한 곳에 있다" 가 정렬 오류인지 원점 위치 탓인지 눈으로 가른다.
-   */
-  showOriginMarker() {
-    if (this.originMarker) return;
-    const g = document.createElement('a-entity');
-    const axis = (color, rot) => {
-      const c = document.createElement('a-cylinder');
-      c.setAttribute('radius', 0.012);
-      c.setAttribute('height', 0.5);
-      c.setAttribute('position', '0 0.25 0');
-      c.setAttribute('material', `shader: flat; color: ${color}`);
-      const pivot = document.createElement('a-entity');
-      pivot.setAttribute('rotation', rot);
-      pivot.appendChild(c);
-      return pivot;
-    };
-    g.appendChild(axis('#ff4444', '0 0 -90'));  // X
-    g.appendChild(axis('#44ff44', '0 0 0'));    // Y
-    g.appendChild(axis('#4488ff', '90 0 0'));   // Z
-    const dot = document.createElement('a-sphere');
-    dot.setAttribute('radius', 0.05);
-    dot.setAttribute('material', 'shader: flat; color: #ffffff');
-    g.appendChild(dot);
-    this.root.appendChild(g);
-    this.originMarker = g;
-    Log.info('[app] 맵 원점 마커 표시 (X 빨강 / Y 초록 / Z 파랑)');
-  },
-
-  /**
-   * 측위 성공 시 호출. 서버에 저장된 배치 좌표를 가져와 그 자리에 세운다.
-   * 이게 VPS 의 본체다 — 누가 언제 와도 같은 자리, 같은 각도.
-   */
+  /** 측위 성공 시. 저장된 위치가 있을 때만 배치한다. */
   async onLocalized(response) {
-    if (this.cfg.debug) this.showOriginMarker();
-
     const mapId = response && response.map;
-    let anchor = null;
+    document.querySelector('#devMapId').textContent = mapId || '–';
 
-    if (mapId && mapId > 0) {
+    if (this.savedAnchor === null && mapId > 0) {
       try {
-        const r = await fetch(`/api/anchor/${mapId}`);
-        const j = await r.json();
-        if (j.found) {
-          anchor = j.anchor;
-          Log.info(`[anchor] 서버 배치 좌표 사용 (map ${mapId}, 저장 ${anchor.updated || '-'})`);
-        }
+        const j = await (await fetch(`/api/anchor/${mapId}`)).json();
+        this.savedAnchor = j.found ? j.anchor : false;
       } catch (e) {
+        this.savedAnchor = false;
         Log.warn('[anchor] 조회 실패:', e.message);
       }
+      this.updateAnchorLabel();
     }
 
-    // 서버에 없으면 config 의 기본값으로 (최초 저작 전 상태)
-    if (!anchor) {
-      const c = this.cfg.immersal.anchor;
-      if (!c || !c.enabled) { this.setHint('정렬 완료 — 배치 좌표가 아직 없어'); return; }
-      anchor = {position: c.position, rotationY: c.rotationY || 0};
-      Log.info('[anchor] 저장된 좌표 없음 → config 기본값 사용');
+    if (this.savedAnchor && !this.door) {
+      const p = this.savedAnchor.position;
+      this.placeDoorLocal(new THREE.Vector3(p.x, p.y, p.z),
+                          (this.savedAnchor.rotationY || 0) * Math.PI / 180);
+      this.setHint('문을 탭하면 열려');
+      Log.info('[anchor] 저장된 위치에 배치');
+    } else if (!this.savedAnchor && !this.devMode) {
+      // 임의의 자리에 놓지 않는다. 위치는 개발자가 정하는 것이다.
+      this.setHint('위치는 인식됐는데 아직 문 위치가 지정되지 않았어');
     }
-
-    const p = anchor.position;
-    this.placeDoorLocal(
-      new THREE.Vector3(p.x, p.y, p.z),
-      (anchor.rotationY || 0) * Math.PI / 180
-    );
-    this.setHint(this.editMode
-      ? '저작 모드 — 바닥을 탭해 옮기고, 각도 맞춘 뒤 저장'
-      : '문을 탭하면 열려');
   },
 
-  /**
-   * 월드(트래킹) 공간 좌표를 받아 콘텐츠 루트의 로컬 좌표로 변환해 배치한다.
-   * 측위가 성공하면 #contentRoot 에 변환이 걸리므로, 월드 좌표를 그대로 넣으면 안 된다.
-   */
+  // ── 배치 ──────────────────────────────────────────────
+  /** 월드(트래킹) 좌표를 콘텐츠 루트의 로컬 좌표(=맵 좌표)로 변환해 배치한다. */
   placeDoor(worldPoint) {
     const root3D = this.root.object3D;
     root3D.updateMatrixWorld(true);
+    const local = root3D.worldToLocal(new THREE.Vector3(worldPoint.x, worldPoint.y, worldPoint.z));
 
-    const local = root3D.worldToLocal(
-      new THREE.Vector3(worldPoint.x, worldPoint.y, worldPoint.z)
-    );
-
-    // 문이 사용자를 바라보도록 — 월드 기준 각을 구한 뒤 루트 회전을 상쇄한다.
     const camWorld = new THREE.Vector3();
     this.el.camera.el.object3D.getWorldPosition(camWorld);
     const worldYaw = Math.atan2(camWorld.x - worldPoint.x, camWorld.z - worldPoint.z);
@@ -220,78 +221,31 @@ AFRAME.registerComponent('dora-experience', {
     const rootQ = new THREE.Quaternion();
     root3D.getWorldQuaternion(rootQ);
     q.premultiply(rootQ.invert());
-    const localYaw = new THREE.Euler().setFromQuaternion(q, 'YXZ').y;
 
-    this.placeDoorLocal(local, localYaw);
+    this.placeDoorLocal(local, new THREE.Euler().setFromQuaternion(q, 'YXZ').y);
   },
 
-  /** 콘텐츠 루트의 로컬 좌표(= 맵 좌표)와 yaw(라디안)로 직접 배치한다. */
   placeDoorLocal(local, yawRad) {
     const c = this.cfg.content;
-
     if (!this.door) {
       const door = document.createElement('a-entity');
       door.setAttribute('anywhere-door', {width: c.doorWidth, height: c.doorHeight});
       door.setAttribute('scale', '0.001 0.001 0.001');
       this.root.appendChild(door);
-      door.setAttribute('animation__pop', {
-        property: 'scale', to: '1 1 1', dur: 700, easing: 'easeOutElastic',
-      });
+      door.setAttribute('animation__pop', {property: 'scale', to: '1 1 1', dur: 700, easing: 'easeOutElastic'});
       door.addEventListener('door-opened', () => this.setHint('문 안쪽을 들여다봐! 주변 아이템도 모아보고'));
       this.door = door;
       this.spawnItems(local);
     }
-
     this.doorYaw = yawRad || 0;
     this.door.object3D.position.copy(local);
     this.door.object3D.quaternion.setFromEuler(new THREE.Euler(0, this.doorYaw, 0));
-    this.updateEditReadout();
   },
 
-  /** 저작 모드 — 문을 회전시킨다. */
-  rotateDoor(deltaDeg) {
+  rotateDoor(deg) {
     if (!this.door) { this.setHint('먼저 바닥을 탭해서 문을 놓아줘'); return; }
-    this.doorYaw += deltaDeg * Math.PI / 180;
+    this.doorYaw += deg * Math.PI / 180;
     this.door.object3D.quaternion.setFromEuler(new THREE.Euler(0, this.doorYaw, 0));
-    this.updateEditReadout();
-  },
-
-  /** 저작 모드 — 현재 배치를 서버에 저장한다. 이후 접속자 모두에게 적용된다. */
-  async saveAnchor() {
-    if (!this.door) { this.setHint('먼저 문을 배치해줘'); return; }
-    const mapId = this.localizedMapId;
-    if (!mapId) { this.setHint('측위가 성공해야 저장할 수 있어 (맵 좌표 기준이라서)'); return; }
-
-    const p = this.door.object3D.position;
-    const body = {
-      position: {x: p.x, y: p.y, z: p.z},
-      rotationY: this.doorYaw * 180 / Math.PI,
-    };
-    try {
-      const r = await fetch(`/api/anchor/${mapId}`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (j.ok) {
-        this.setHint('저장 완료! 이제 누가 접속해도 이 자리에 나타나');
-        Log.info(`[anchor] 저장됨 map=${mapId} ${JSON.stringify(body)}`);
-      } else {
-        this.setHint('저장 실패 — 로그 확인');
-        Log.error('[anchor] 저장 실패:', JSON.stringify(j));
-      }
-    } catch (e) {
-      Log.error('[anchor] 저장 오류:', e.message);
-    }
-  },
-
-  updateEditReadout() {
-    const el = document.querySelector('#editReadout');
-    if (!el || !this.door) return;
-    const p = this.door.object3D.position;
-    const f = (n) => n.toFixed(2);
-    el.textContent = `x ${f(p.x)}  y ${f(p.y)}  z ${f(p.z)}  /  ${(this.doorYaw * 180 / Math.PI).toFixed(0)}°`;
   },
 
   spawnItems(center) {
@@ -311,89 +265,140 @@ AFRAME.registerComponent('dora-experience', {
     this.total = c.itemCount;
   },
 
-  onCollect(type) {
-    this.count++;
-    this.hud.count.textContent = `${this.count} / ${this.total}`;
-    const name = type === 'bell' ? '방울' : '대나무 헬리콥터';
-    this.setHint(this.count >= this.total ? '전부 모았다! 🎉' : `${name} 획득!`);
+  // ── 앵커 저장 ─────────────────────────────────────────
+  async saveAnchor() {
+    if (!this.door) { this.setHint('먼저 바닥을 탭해서 문을 놓아줘'); return; }
+    if (!this.localizedMapId) { this.setHint('측위가 성공해야 저장할 수 있어 (맵 좌표 기준이라서)'); return; }
+
+    const p = this.door.object3D.position;
+    const body = {position: {x: p.x, y: p.y, z: p.z}, rotationY: this.doorYaw * 180 / Math.PI};
+    try {
+      const j = await (await fetch(`/api/anchor/${this.localizedMapId}`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+      })).json();
+      if (j.ok) {
+        this.savedAnchor = j.anchor;
+        this.updateAnchorLabel();
+        this.setHint('저장 완료! 이제 누가 접속해도 이 자리에 나타나');
+        Log.info('[anchor] 저장됨', JSON.stringify(body));
+      } else {
+        Log.error('[anchor] 저장 실패:', JSON.stringify(j));
+      }
+    } catch (e) {
+      Log.error('[anchor] 저장 오류:', e.message);
+    }
   },
 
-  reset() {
-    while (this.root.firstChild) this.root.removeChild(this.root.firstChild);
-    this.door = null;
-    this.originMarker = null;
-    this.count = 0;
-    this.total = 0;
-    this.hud.count.textContent = '0 / 0';
-    this.setHint(this.editMode ? '저작 모드 — 바닥을 탭해 문을 놓아줘' : '주변을 비춰줘');
-    Log.info('[app] 리셋됨');
+  async deleteAnchor() {
+    if (!this.localizedMapId) return;
+    try {
+      await fetch(`/api/anchor/${this.localizedMapId}`, {method: 'DELETE'});
+      this.savedAnchor = false;
+      this.updateAnchorLabel();
+      this.setHint('저장된 위치를 삭제했어');
+      Log.info('[anchor] 삭제됨');
+    } catch (e) {
+      Log.error('[anchor] 삭제 오류:', e.message);
+    }
   },
 
-  /** 포즈 규약을 하나씩 돌려보며 실제 공간과 맞는 번호를 찾는다. 재측위 불필요. */
-  cycleConvention() {
-    if (!this.localizer) { this.setHint('VPS 가 아직 준비되지 않았어'); return; }
-    const name = this.localizer.setConvention(this.localizer.conventionIndex + 1);
-    document.querySelector('#convIdx').textContent = this.localizer.conventionIndex;
-    this.setHint(`정렬 규약 ${name} — 문 위치가 맞아?`);
-  },
-
-  /**
-   * 트래킹이 실제로 도는지 눈으로 판정하기 위한 계측.
-   *
-   * 걸어다닐 때 "거리" 가 변하면 문은 공간에 고정된 것이고,
-   * 거리가 그대로면 문이 카메라를 따라다니는 것이다 (= 월드 트래킹 미동작).
-   */
-  updateReadout() {
-    if (!this.cfg.debug) return;
-
-    const el = document.querySelector('#trackReadout');
+  updateAnchorLabel() {
+    const el = document.querySelector('#devAnchor');
     if (!el) return;
+    if (this.savedAnchor) {
+      const p = this.savedAnchor.position;
+      el.textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)} / ${Math.round(this.savedAnchor.rotationY)}°`;
+    } else {
+      el.textContent = '없음';
+    }
+  },
 
+  // ── 진단 표시 ─────────────────────────────────────────
+  showDiagnostics(d) {
+    const scale = document.querySelector('#devScale');
+    const agree = document.querySelector('#devAgree');
+    const verdict = document.querySelector('#devVerdict');
+    if (!scale) return;
+
+    if (!d || !d.ready) {
+      scale.textContent = '–';
+      agree.textContent = '–';
+      verdict.className = 'verdict';
+      verdict.textContent = `측위 ${d ? d.samples : 0}회. 1m 이상 걸어가서 한 번 더 측위되면 검증값이 나와요.`;
+      return;
+    }
+
+    scale.textContent = d.scaleRatio.toFixed(3);
+    agree.textContent = `${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(1)}°`;
+
+    const problems = [];
+    if (Math.abs(d.scaleRatio - 1) >= 0.1) {
+      problems.push(`스케일이 ${d.scaleRatio.toFixed(2)}배 어긋남 — 씬이 미터 단위가 아닙니다`);
+    }
+    if (d.agreePos >= 0.5 || d.agreeDeg >= 8) {
+      problems.push(`두 지점 측위 결과가 ${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(0)}° 어긋남 — 맵 품질 또는 좌표 규약 문제`);
+    }
+
+    if (problems.length) {
+      verdict.className = 'verdict bad';
+      verdict.textContent = '문제 발견: ' + problems.join(' · ');
+    } else {
+      verdict.className = 'verdict ok';
+      verdict.textContent = '정상. 맵과 정렬이 모두 신뢰할 만합니다. 이제 문 위치를 지정하세요.';
+    }
+  },
+
+  updateDevReadout() {
+    if (!this.devMode) return;
     const cam = new THREE.Vector3();
     this.el.camera.el.object3D.getWorldPosition(cam);
     const f = (n) => n.toFixed(2);
 
-    // 카메라가 실제로 움직이고 있는지 (SLAM 생존 확인).
-    // 실기기는 손떨림만으로도 늘 미세하게 움직이므로, 연속으로 완전히 멎어 있으면
-    // 월드 트래킹이 죽었다는 뜻이다.
-    const moved = this._prevCam ? cam.distanceTo(this._prevCam) : 0;
-    this._stillCount = moved < 0.001 ? (this._stillCount || 0) + 1 : 0;
-    this._prevCam = cam.clone();
-
-    let text = `cam ${f(cam.x)},${f(cam.y)},${f(cam.z)}`;
-    if (this.door) {
-      const d = new THREE.Vector3();
-      this.door.object3D.getWorldPosition(d);
-      text += `  |  문까지 ${f(cam.distanceTo(d))}m`;
+    const camEl = document.querySelector('#devCam');
+    if (camEl) {
+      const moved = this._prevCam ? cam.distanceTo(this._prevCam) : 0;
+      this._still = moved < 0.001 ? (this._still || 0) + 1 : 0;
+      this._prevCam = cam.clone();
+      camEl.textContent = `${f(cam.x)}, ${f(cam.y)}, ${f(cam.z)}` + (this._still > 8 ? '  정지!' : '');
     }
-    text += this._stillCount > 8
-      ? '  |  카메라 정지 ⚠ 트래킹 확인'
-      : `  |  ${(moved * 1000).toFixed(0)}mm`;
-    el.textContent = text;
+
+    if (this.localizer) {
+      const s = document.querySelector('#devLocStat');
+      if (s) s.textContent = `${this.localizer.successes} / ${this.localizer.attempts}`;
+      const c = document.querySelector('#devConv');
+      if (c) c.textContent = this.localizer.conventionName();
+    }
+
+    const cur = document.querySelector('#devCurrent');
+    if (cur) {
+      if (this.door) {
+        const p = this.door.object3D.position;
+        cur.textContent = `${f(p.x)}, ${f(p.y)}, ${f(p.z)} / ${Math.round(this.doorYaw * 180 / Math.PI)}°`;
+      } else {
+        cur.textContent = '없음';
+      }
+    }
   },
 
-  /** 정렬 진단 결과를 화면에 띄운다. 이 칩이 정렬이 맞는지에 대한 유일한 객관적 근거다. */
-  showDiagnostics(d) {
-    const el = document.querySelector('#diagChip');
-    if (!el) return;
-    if (!d || !d.ready) {
-      el.textContent = `진단: 측위 ${d ? d.samples : 0}회 — ${MIN_BASELINE_HINT}`;
-      el.style.background = 'rgba(60,60,60,.8)';
-      return;
-    }
-    el.textContent =
-      `스케일 ${d.scaleRatio.toFixed(2)}  |  일치 ${d.agreePos.toFixed(2)}m/${d.agreeDeg.toFixed(0)}°  |  ${d.ok ? '정상' : '불량'}`;
-    el.style.background = d.ok ? 'rgba(0,120,60,.85)' : 'rgba(200,0,20,.85)';
+  onCollect(type) {
+    this.count++;
+    document.querySelector('#count').textContent = `${this.count} / ${this.total}`;
+    const name = type === 'bell' ? '방울' : '대나무 헬리콥터';
+    this.setHint(this.count >= this.total ? '전부 모았다! 🎉' : `${name} 획득!`);
   },
 
   // ── HUD ───────────────────────────────────────────────
-  setHint(t) { if (this.hud.hint) this.hud.hint.textContent = t; },
+  setHint(t) { const e = document.querySelector('#hint'); if (e) e.textContent = t; },
   setTracking(dot, text) {
-    if (this.hud.tracking) this.hud.tracking.className = `dot ${dot}`;
-    if (this.hud.trackingText) this.hud.trackingText.textContent = text;
+    const d = document.querySelector('#dotTracking');
+    const t = document.querySelector('#textTracking');
+    if (d) d.className = `dot ${dot}`;
+    if (t) t.textContent = text;
   },
   setVps(dot, text) {
-    if (this.hud.vps) this.hud.vps.className = `dot ${dot}`;
-    if (this.hud.vpsText) this.hud.vpsText.textContent = text;
+    const d = document.querySelector('#dotVps');
+    const t = document.querySelector('#textVps');
+    if (d) d.className = `dot ${dot}`;
+    if (t) t.textContent = text;
   },
 });

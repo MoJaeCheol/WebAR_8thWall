@@ -17,6 +17,7 @@
   <script src="js/logger.js"></script>
   <script src="js/textures.js"></script>
   <script src="js/png.js"></script>
+  <script src="js/ply.js"></script>
   <script src="js/immersal.js"></script>
   <script src="js/components/anywhere-door.js"></script>
   <script src="js/components/collectible.js"></script>
@@ -31,42 +32,75 @@
   <div class="bell"></div>
   <h1>어디로든 문 AR</h1>
   <p>
-    카메라를 켜고 바닥을 천천히 비춰줘.<br>
-    바닥을 탭하면 문이 나타나!
+    카메라를 켜고 주변을 천천히 비춰줘.<br>
+    위치가 인식되면 문이 나타나!
   </p>
   <button id="startBtn">AR 시작하기</button>
 </div>
 
-<!-- ── HUD ──────────────────────────────────────────── -->
+<!-- ── 개발자 모드 진입 버튼 (우상단) ───────────────────── -->
+<button id="devBtn" title="개발자 모드">⚙</button>
+
+<!-- ── 개발자 패널 ───────────────────────────────────── -->
+<aside id="devPanel">
+  <header>
+    <span class="title">개발자 모드</span>
+    <span class="build" id="devBuild">build …</span>
+    <button id="devCollapse" title="접기">▲</button>
+  </header>
+
+  <div class="body">
+    <section>
+      <h4>1. 맵 검증</h4>
+      <div class="kv"><span>맵 ID</span><b id="devMapId">–</b></div>
+      <div class="kv"><span>측위 성공</span><b id="devLocStat">0 / 0</b></div>
+      <div class="kv"><span>특징점 수</span><b id="devPoints">–</b></div>
+      <div class="kv"><span>스케일</span><b id="devScale">–</b></div>
+      <div class="kv"><span>두 지점 일치</span><b id="devAgree">–</b></div>
+      <p class="verdict" id="devVerdict">측위를 기다리는 중…</p>
+      <button class="wide" id="devTogglePoints">맵 특징점 겹쳐 보기</button>
+    </section>
+
+    <section>
+      <h4>2. 문 위치 지정</h4>
+      <p class="note">바닥을 탭해 문을 놓고, 각도를 맞춘 뒤 <b>저장</b>. 저장한 위치는 모든 접속자에게 동일하게 적용됩니다.</p>
+      <div class="kv"><span>저장된 위치</span><b id="devAnchor">없음</b></div>
+      <div class="kv"><span>현재 배치</span><b id="devCurrent">없음</b></div>
+      <div class="btns">
+        <button id="devRotL">↺ 15°</button>
+        <button id="devRotR">15° ↻</button>
+        <button id="devSave" class="primary">저장</button>
+        <button id="devDelete" class="danger">저장 삭제</button>
+      </div>
+    </section>
+
+    <section>
+      <h4>3. 진단</h4>
+      <div class="kv"><span>카메라</span><b id="devCam">–</b></div>
+      <div class="kv"><span>규약</span><b id="devConv">–</b></div>
+      <div class="btns">
+        <button id="devCycleConv">규약 수동 변경</button>
+        <button id="devToggleLog">로그 보기</button>
+      </div>
+    </section>
+  </div>
+</aside>
+
+<div id="log"></div>
+
+<!-- ── 관람 HUD ─────────────────────────────────────── -->
 <div id="hud">
   <div class="hud-top">
     <div class="chip"><span id="dotTracking" class="dot pending"></span><span id="textTracking">트래킹 준비 중</span></div>
     <div class="chip"><span id="dotVps" class="dot"></span><span id="textVps">VPS 확인 중</span></div>
   </div>
   <div class="hud-bottom">
-    <div class="chip debug-only" id="buildTag" style="pointer-events:none">build …</div>
-    <div class="chip debug-only" id="diagChip" style="pointer-events:none">진단: 측위 대기</div>
-    <div class="chip debug-only" id="trackReadout" style="pointer-events:none">트래킹 대기</div>
     <div id="hint">카메라를 준비하는 중…</div>
     <div class="btn-row">
-      <button class="btn" id="btnReset">리셋</button>
-      <button class="btn" id="btnSummon">정면 소환</button>
-      <button class="btn" id="btnConvention">정렬 보정 <span id="convIdx">0</span></button>
-      <button class="btn primary" id="btnLocalize">VPS 측위</button>
       <div class="chip" style="pointer-events:none"><span>🔔</span><span id="count">0 / 0</span></div>
-    </div>
-
-    <!-- 저작 모드(?edit=1)에서만 보인다 -->
-    <div class="btn-row edit-only">
-      <button class="btn" id="btnRotL">↺ 15°</button>
-      <span class="chip" id="editReadout" style="pointer-events:none">배치 없음</span>
-      <button class="btn" id="btnRotR">15° ↻</button>
-      <button class="btn primary" id="btnSave">💾 저장</button>
     </div>
   </div>
 </div>
-
-<div id="log"></div>
 
 <!-- ── AR 씬 ────────────────────────────────────────── -->
 <a-scene
@@ -78,7 +112,6 @@
   vr-mode-ui="enabled: false"
   xrweb="allowedDevices: any; scale: absolute">
 
-  <!-- 카메라를 사람 눈높이(1.6)에 두면 responsive 스케일에서 1 unit ≈ 1m 로 맞는다 -->
   <a-camera
     id="camera"
     position="0 1.6 0"
@@ -98,7 +131,7 @@
   </a-entity>
   <a-light type="ambient" intensity="0.65"></a-light>
 
-  <!-- 그림자만 받는 바닥. 탭 레이캐스트 대상이기도 하다. -->
+  <!-- 그림자만 받는 바닥. 개발자 모드에서 탭 레이캐스트 대상이기도 하다. -->
   <a-box
     id="ground"
     class="cantap"
@@ -108,8 +141,7 @@
     shadow>
   </a-box>
 
-  <!-- 모든 콘텐츠는 이 루트 아래에 들어간다.
-       Immersal 측위가 성공하면 이 루트의 transform 이 실제 공간 기준으로 정렬된다. -->
+  <!-- 맵 좌표계 콘텐츠 루트. 측위가 성공하면 이 루트가 실제 공간에 정렬된다. -->
   <a-entity id="contentRoot"></a-entity>
 
 </a-scene>

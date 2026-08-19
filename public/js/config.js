@@ -44,5 +44,5 @@ window.AR_CONFIG = {
     itemRadius: 2.2,        // 배치 반경(m)
   },
 
-  debug: true,              // 화면 하단 로그 패널 표시 (?debug=0 으로 끌 수 있음)
+  // 개발자 모드는 우상단 ⚙ 버튼으로 켠다 (localStorage 에 저장되어 새로고침해도 유지)
 };
