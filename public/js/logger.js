@@ -13,11 +13,13 @@
       // 로그가 하단 버튼을 가리지 않도록 접을 수 있게 한다.
       const btn = document.createElement('button');
       btn.id = 'logToggle';
-      btn.textContent = '로그 접기';
+      // 기본은 접힘. 로그가 화면을 점령하지 않게 한다.
+      el.classList.add('collapsed');
+      btn.textContent = '▼ 로그 보기';
       btn.addEventListener('click', () => {
-        const collapsed = document.body.classList.toggle('log-collapsed');
-        el.classList.toggle('collapsed', collapsed);
-        btn.textContent = collapsed ? '로그 펼치기' : '로그 접기';
+        const collapsed = el.classList.toggle('collapsed');
+        btn.textContent = collapsed ? '▼ 로그 보기' : '▲ 로그 닫기';
+        if (!collapsed) el.scrollTop = el.scrollHeight;
       });
       document.body.appendChild(btn);
     }

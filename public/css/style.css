@@ -82,18 +82,36 @@ body {
 .btn:active { transform: scale(.96); }
 .btn.primary { background: var(--dora-blue); }
 
-/* ── 디버그 로그 ───────────────────────────────────────── */
+/* ── 디버그 로그 ───────────────────────────────────────
+   버튼은 화면 아래, 로그는 화면 위. 구조적으로 겹칠 수 없게 한다.
+   (z-index 로 조정하던 방식은 뷰포트 높이에 따라 다시 겹칠 수 있었다) */
 #log {
-  /* HUD(z-index 100) 보다 아래에 둔다. 위에 있으면 하단 버튼을 통째로 덮어버린다. */
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
-  max-height: 22vh; overflow-y: auto; display: none;
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 58px);   /* 상단 상태 칩 아래 */
+  left: 8px; right: 8px;
+  z-index: 90;                                        /* HUD(100) 보다 아래 */
+  max-height: 30vh; overflow-y: auto; display: none;
   background: rgba(0, 0, 0, .82); color: #9fe8b0;
+  border-radius: 10px;
   font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
   padding: 8px 10px; white-space: pre-wrap; word-break: break-all;
 }
 #log.on { display: block; }
+#log.collapsed { display: none; }
 #log .e { color: #ff8a8a; }
 #log .w { color: #ffd900; }
+
+#logToggle {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 14px);
+  left: 50%; transform: translateX(-50%);
+  z-index: 110;                                       /* 로그보다 위, 항상 누를 수 있게 */
+  background: rgba(0, 0, 0, .8); color: #9fe8b0;
+  border: 0; border-radius: 999px; padding: 7px 14px;
+  font: 11px ui-monospace, Menlo, Consolas, monospace;
+  cursor: pointer; display: none;
+}
+body.debug-on #logToggle { display: block; }
 
 /* ── 저작 모드 전용 UI ─────────────────────────────────── */
 .edit-only { display: none; }
@@ -103,24 +121,12 @@ body.edit-mode #editReadout {
   background: rgba(230, 0, 18, .75);
 }
 
-/* 디버그 로그가 켜지면 하단 버튼들을 로그 위로 밀어 올린다 */
-body.debug-on .hud-bottom { padding-bottom: 23vh; }
-#log.collapsed { max-height: 26px; }
-#logToggle {
-  position: fixed; right: 10px; z-index: 95;
-  bottom: calc(22vh + 4px);
-  background: rgba(0, 0, 0, .8); color: #9fe8b0;
-  border: 0; border-radius: 6px 6px 0 0; padding: 3px 10px;
-  font: 11px ui-monospace, Menlo, Consolas, monospace; cursor: pointer;
-  display: none;
-}
-body.debug-on #logToggle { display: block; }
-body.debug-on.log-collapsed .hud-bottom { padding-bottom: 40px; }
-body.log-collapsed #logToggle { bottom: 26px; }
-
 .debug-only { display: none; }
 body.debug-on .debug-only { display: inline-flex; }
 #trackReadout {
   font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
   background: rgba(0, 80, 40, .82);
 }
+
+/* 버튼이 여러 줄이어도 화면 밖으로 밀리지 않게 */
+.btn-row { flex-wrap: wrap; justify-content: center; }

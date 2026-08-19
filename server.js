@@ -72,12 +72,17 @@ app.use(express.json({ limit: '12mb' })); // base64 이미지 업로드용
 app.use(express.static(path.join(__dirname, 'public'), {
   // 개발 중에는 캐시를 끄고, 프로덕션에서는 8frame(1.4MB) 등이 재다운로드되지 않게 캐싱한다.
   etag: true,
-  maxAge: IS_PROD ? '1h' : 0,
+  maxAge: 0,
   setHeaders(res, filePath) {
-    if (!IS_PROD) {
+    const rel = filePath.split(path.sep).join('/');
+    if (rel.includes('/external/')) {
+      // 버전이 파일명에 박힌 벤더 스크립트만 장기 캐시
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    } else if (IS_PROD) {
+      // 앱 파일은 항상 재검증. 캐시로 두면 고친 코드가 폰에 안 내려간다(304 라 비용도 거의 없다).
+      res.setHeader('Cache-Control', 'no-cache');
+    } else {
       res.setHeader('Cache-Control', 'no-store');
-    } else if (/[\/]external[\/]/.test(filePath)) {
-      res.setHeader('Cache-Control', 'public, max-age=604800, immutable'); // 버전 고정된 벤더 스크립트
     }
   },
 }));
