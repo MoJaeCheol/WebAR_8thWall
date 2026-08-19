@@ -308,9 +308,19 @@
 
       const tilt = UP.clone().applyQuaternion(quat).angleTo(UP) * 180 / Math.PI;
       if (this.gravityLock) {
-        // 두 좌표계 모두 중력 정렬이므로 pitch/roll 은 오차다. 버리면 더 안정적이다.
+        // 두 좌표계 모두 중력 정렬이므로 pitch/roll 은 측위 오차다. 버리는 편이 안정적이다.
+        //
+        // ⚠ 회전만 평탄화하고 평행이동을 그대로 두면 맵 원점을 축으로 전체가 휘둘린다.
+        //    원점에서 3m 떨어진 콘텐츠는 기울기 5°만으로도 26cm 밀리고, 기울기는
+        //    측위마다 달라지므로 세션마다 다른 자리에 놓이게 된다.
+        //    회전을 바꿨으면 "카메라가 맵 좌표 (px,py,pz) 에 있다" 는 대응을 유지하도록
+        //    평행이동을 다시 풀어야 한다:  pos = camWorld − quat · camMap
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
         quat.setFromEuler(new THREE.Euler(0, Math.atan2(-fwd.x, -fwd.z), 0));
+
+        const camMap = new THREE.Vector3(last.r.px, last.r.py, last.r.pz);
+        const camWorld = new THREE.Vector3().setFromMatrixPosition(last.cam);
+        pos.copy(camWorld).sub(camMap.clone().applyQuaternion(quat));
       }
 
       const o = this.rootEl.object3D;
