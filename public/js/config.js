@@ -12,7 +12,8 @@ window.AR_CONFIG = {
     enabled: true,          // 서버(.env)에 토큰/맵이 설정돼 있을 때만 실제로 동작
     autoLocalize: true,     // 진입 후 자동 반복 측위
     intervalMs: 3000,       // 측위 요청 주기(ms)
-    maxAttempts: 20,        // 자동 측위 최대 시도 (성공 시 중단)
+    maxAttempts: 40,        // 자동 측위 최대 시도
+    continuous: true,       // 성공해도 계속 측위 — 두 지점 측위가 있어야 정렬 진단이 된다
     maxDimension: 640,      // 서버로 보낼 캡처 이미지 최대 변 길이 (클수록 정확/느림)
 
     // 포즈 규약. 'auto' 면 중력 정렬을 기준으로 자동 선택한다.

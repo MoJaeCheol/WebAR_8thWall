@@ -2,6 +2,8 @@
  * 체험 전체 흐름 관리 — 배치 / 수집 / HUD / VPS 연동.
  * a-scene 에 붙인다.
  */
+const MIN_BASELINE_HINT = '1m 이상 걸어가서 다시 측위 필요';
+
 AFRAME.registerComponent('dora-experience', {
   init() {
     const CFG = window.AR_CONFIG;
@@ -88,6 +90,8 @@ AFRAME.registerComponent('dora-experience', {
 
     this.localizer = new window.ImmersalLocalizer({
       rootEl: this.root,
+      cameraEl: this.el.camera.el,
+      onDiagnostics: (d) => this.showDiagnostics(d),
       onStatus: (s) => {
         const map = {
           idle:     ['warn', 'VPS 대기'],
@@ -115,7 +119,11 @@ AFRAME.registerComponent('dora-experience', {
     this.localizer.attachPipeline(cfg.maxDimension);
     const ready = await this.localizer.checkServer();
     if (ready && cfg.autoLocalize) {
-      this.localizer.startAuto({intervalMs: cfg.intervalMs, maxAttempts: cfg.maxAttempts});
+      this.localizer.startAuto({
+        intervalMs: cfg.intervalMs,
+        maxAttempts: cfg.maxAttempts,
+        continuous: cfg.continuous !== false,   // 진단에 두 지점 측위가 필요하다
+      });
     }
   },
 
@@ -362,6 +370,20 @@ AFRAME.registerComponent('dora-experience', {
       ? '  |  카메라 정지 ⚠ 트래킹 확인'
       : `  |  ${(moved * 1000).toFixed(0)}mm`;
     el.textContent = text;
+  },
+
+  /** 정렬 진단 결과를 화면에 띄운다. 이 칩이 정렬이 맞는지에 대한 유일한 객관적 근거다. */
+  showDiagnostics(d) {
+    const el = document.querySelector('#diagChip');
+    if (!el) return;
+    if (!d || !d.ready) {
+      el.textContent = `진단: 측위 ${d ? d.samples : 0}회 — ${MIN_BASELINE_HINT}`;
+      el.style.background = 'rgba(60,60,60,.8)';
+      return;
+    }
+    el.textContent =
+      `스케일 ${d.scaleRatio.toFixed(2)}  |  일치 ${d.agreePos.toFixed(2)}m/${d.agreeDeg.toFixed(0)}°  |  ${d.ok ? '정상' : '불량'}`;
+    el.style.background = d.ok ? 'rgba(0,120,60,.85)' : 'rgba(200,0,20,.85)';
   },
 
   // ── HUD ───────────────────────────────────────────────

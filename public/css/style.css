@@ -130,3 +130,8 @@ body.debug-on .debug-only { display: inline-flex; }
 
 /* 버튼이 여러 줄이어도 화면 밖으로 밀리지 않게 */
 .btn-row { flex-wrap: wrap; justify-content: center; }
+
+#diagChip {
+  font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(60, 60, 60, .8);
+}
