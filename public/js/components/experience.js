@@ -167,6 +167,8 @@ AFRAME.registerComponent('dora-experience', {
     this.localizer.autoConvention = (conv === 'auto' || conv === undefined);
     this.localizer.conventionIndex = this.localizer.autoConvention ? 0 : conv;
     this.localizer.gravityLock = cfg.gravityLock !== false;
+    if (cfg.smoothing !== undefined) this.localizer.smoothing = cfg.smoothing;
+    if (cfg.outlierMeters !== undefined) this.localizer.outlierMeters = cfg.outlierMeters;
     this.localizer.attachPipeline(cfg.maxDimension);
 
     const ready = await this.localizer.checkServer();
@@ -330,6 +332,11 @@ AFRAME.registerComponent('dora-experience', {
 
     scale.textContent = d.scaleRatio.toFixed(3);
     agree.textContent = `${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(1)}°`;
+    const shiftEl = document.querySelector('#devShift');
+    if (shiftEl) {
+      shiftEl.textContent = `${(d.lastShift * 100).toFixed(0)}cm`
+        + (d.rejected ? `  (무시 ${d.rejected})` : '');
+    }
 
     const problems = [];
     if (Math.abs(d.scaleRatio - 1) >= 0.1) {
@@ -337,6 +344,9 @@ AFRAME.registerComponent('dora-experience', {
     }
     if (d.agreePos >= 0.5 || d.agreeDeg >= 8) {
       problems.push(`두 지점 측위 결과가 ${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(0)}° 어긋남 — 맵 품질 또는 좌표 규약 문제`);
+    }
+    if (d.lastShift >= 0.3) {
+      problems.push(`정렬이 매 측위마다 ${(d.lastShift * 100).toFixed(0)}cm 움직임 — 측위가 불안정합니다`);
     }
 
     if (problems.length) {

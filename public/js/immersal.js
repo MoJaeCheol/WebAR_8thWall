@@ -61,6 +61,15 @@
       this.gravityLock = true;
       this.samples = [];            // [{r, cam: Matrix4, camPos: Vector3}]
       this.diagnostics = null;
+
+      // 정렬 적용 정책.
+      // 측위는 진단을 위해 계속 돌지만, 성공할 때마다 정렬을 통째로 덮어쓰면
+      // 콘텐츠가 3초마다 튄다. 첫 정렬만 즉시 적용하고 이후엔 부드럽게 보정한다.
+      this.applied = false;
+      this.smoothing = 0.25;        // 0 = 갱신 안 함, 1 = 매번 덮어쓰기
+      this.outlierMeters = 1.5;     // 이보다 멀리 튀는 결과는 이상치로 무시
+      this.lastShift = 0;           // 마지막 갱신에서 정렬이 움직인 거리(m)
+      this.rejected = 0;
     }
 
     setConvention(i) {
@@ -68,6 +77,7 @@
       this.conventionIndex = ((i % CONVENTIONS.length) + CONVENTIONS.length) % CONVENTIONS.length;
       const c = CONVENTIONS[this.conventionIndex];
       if (this.samples.length) {
+        this.applied = false;   // 규약이 바뀌었으니 새 기준으로 다시 잡는다
         this._applyLatest();
         this._runDiagnostics();
         Log.info(`[immersal] 규약 → ${c.name} (재정렬 완료)`);
@@ -304,13 +314,32 @@
       }
 
       const o = this.rootEl.object3D;
-      o.position.copy(pos);
-      o.quaternion.copy(quat);
-      o.scale.set(1, 1, 1);
-      o.updateMatrixWorld(true);
-
       const f = (n) => n.toFixed(2);
-      Log.info(`[immersal] ${this.conventionName()} → 루트 (${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)}) 기울기 ${tilt.toFixed(0)}°`);
+
+      if (!this.applied) {
+        o.position.copy(pos);
+        o.quaternion.copy(quat);
+        o.scale.set(1, 1, 1);
+        this.applied = true;
+        this.lastShift = 0;
+        Log.info(`[immersal] ${this.conventionName()} → 최초 정렬 (${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)}) 기울기 ${tilt.toFixed(0)}°`);
+      } else {
+        const shift = pos.distanceTo(o.position);
+        this.lastShift = shift;
+
+        if (shift > this.outlierMeters) {
+          // 갑자기 멀리 튀는 결과는 오측위일 가능성이 크다. 콘텐츠를 날리느니 무시한다.
+          this.rejected++;
+          Log.warn(`[immersal] 이상치 무시 — 정렬이 ${shift.toFixed(2)}m 튐 (누적 ${this.rejected}회)`);
+          return;
+        }
+        // 매번 덮어쓰지 않고 조금씩 당긴다. 콘텐츠가 튀지 않으면서 드리프트는 보정된다.
+        o.position.lerp(pos, this.smoothing);
+        o.quaternion.slerp(quat, this.smoothing);
+        Log.info(`[immersal] 정렬 보정 ${(shift * 100).toFixed(0)}cm (평활 ${this.smoothing})`);
+      }
+
+      o.updateMatrixWorld(true);
       if (Math.abs(scl.x - 1) > 0.05) {
         Log.warn(`[immersal] 변환에 배율 ${scl.x.toFixed(3)} 이 섞여 있다 — 씬 스케일 확인 필요`);
       }
@@ -344,6 +373,7 @@
         samples: this.samples.length,
         dMap, dSlam, scaleRatio,
         agreePos: pos, agreeDeg: deg,
+        lastShift: this.lastShift, rejected: this.rejected,
         ok: Math.abs(scaleRatio - 1) < 0.1 && pos < 0.5 && deg < 8,
       };
 
