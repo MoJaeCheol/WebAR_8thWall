@@ -138,6 +138,57 @@ app.post('/api/immersal/localize', async (req, res) => {
   }
 });
 
+// ── 앵커(콘텐츠 배치 좌표) 저장소 ──────────────────────────────
+// VPS 의 핵심은 "누가 언제 와도 같은 자리, 같은 각도" 다.
+// 그러려면 배치 좌표가 기기가 아니라 서버에 있어야 한다.
+const ANCHOR_FILE = path.join(__dirname, 'data', 'anchors.json');
+
+function readAnchors() {
+  try {
+    return JSON.parse(fs.readFileSync(ANCHOR_FILE, 'utf8'));
+  } catch (e) {
+    return { anchors: {} };
+  }
+}
+
+function writeAnchors(doc) {
+  fs.mkdirSync(path.dirname(ANCHOR_FILE), { recursive: true });
+  fs.writeFileSync(ANCHOR_FILE, JSON.stringify(doc, null, 2), 'utf8');
+}
+
+/** 특정 맵의 배치 좌표를 읽는다. 없으면 null. */
+app.get('/api/anchor/:mapId', (req, res) => {
+  const doc = readAnchors();
+  const a = doc.anchors[String(req.params.mapId)];
+  res.json(a ? { found: true, anchor: a } : { found: false, anchor: null });
+});
+
+/** 전체 앵커 덤프 — 재배포 후에도 유지하려면 이 내용을 data/anchors.json 에 커밋한다. */
+app.get('/api/anchors', (req, res) => res.json(readAnchors()));
+
+/** 배치 좌표를 저장한다 (저작 모드에서 호출). */
+app.post('/api/anchor/:mapId', (req, res) => {
+  const { position, rotationY } = req.body || {};
+  if (!position || typeof position.x !== 'number') {
+    return res.status(400).json({ error: 'bad-request', message: 'position {x,y,z} 가 필요합니다.' });
+  }
+  const doc = readAnchors();
+  const mapId = String(req.params.mapId);
+  doc.anchors[mapId] = {
+    position: { x: +position.x, y: +position.y, z: +position.z },
+    rotationY: +(rotationY || 0),
+    updated: new Date().toISOString(),
+  };
+  writeAnchors(doc);
+  console.log(`[anchor] map ${mapId} 저장:`, JSON.stringify(doc.anchors[mapId]));
+  if (IS_PROD) {
+    // Render 무료 플랜은 파일시스템이 휘발성이라 재배포 시 사라진다.
+    // 영구 보존하려면 아래 내용을 data/anchors.json 에 커밋할 것.
+    console.log('[anchor] ⚠ 영구 보존하려면 data/anchors.json 에 커밋:\n' + JSON.stringify(doc, null, 2));
+  }
+  res.json({ ok: true, anchor: doc.anchors[mapId] });
+});
+
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // --- 헬스체크 (Render 가 서비스 상태를 확인한다) ---

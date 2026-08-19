@@ -21,16 +21,32 @@ AFRAME.registerComponent('dora-experience', {
     this.root = document.querySelector('#contentRoot');
     this.ground = document.querySelector('#ground');
 
-    this.ground.addEventListener('click', (e) => this.placeDoor(e.detail.intersection.point));
+    // 저작 모드에서만 탭으로 옮길 수 있다. 관람 모드는 저장된 자리에 고정.
+    this.editMode = new URLSearchParams(location.search).get('edit') === '1';
+    this.ground.addEventListener('click', (e) => {
+      if (!this.editMode) return;
+      this.placeDoor(e.detail.intersection.point);
+    });
+    if (this.editMode) {
+      document.body.classList.add('edit-mode');
+      Log.info('[app] 저작 모드 — 배치 후 저장하면 모든 접속자에게 적용된다');
+    }
     this.el.addEventListener('item-collected', (e) => this.onCollect(e.detail.type));
 
     // 측위 성공 시 맵 좌표에 콘텐츠를 세운다 (VPS 를 쓰는 본래 목적).
     // initImmersal() 안이 아니라 여기에 두어야 카메라 초기화 순서와 무관하게 항상 등록된다.
-    this.root.addEventListener('immersal-localized', () => this.onLocalized());
+    this.root.addEventListener('immersal-localized', (e) => {
+      const resp = e.detail && e.detail.response;
+      this.localizedMapId = resp && resp.map;
+      this.onLocalized(resp);
+    });
 
     document.querySelector('#btnReset').addEventListener('click', () => this.reset());
     document.querySelector('#btnSummon').addEventListener('click', () => this.summonInFront());
     document.querySelector('#btnConvention').addEventListener('click', () => this.cycleConvention());
+    document.querySelector('#btnRotL').addEventListener('click', () => this.rotateDoor(-15));
+    document.querySelector('#btnRotR').addEventListener('click', () => this.rotateDoor(15));
+    document.querySelector('#btnSave').addEventListener('click', () => this.saveAnchor());
     document.querySelector('#btnLocalize').addEventListener('click', () => {
       this.setHint('VPS 측위 시도 중… 스캔했던 장소를 비춰줘');
       this.localizer && this.localizer.localizeOnce();
@@ -39,7 +55,9 @@ AFRAME.registerComponent('dora-experience', {
     // ── 8th Wall 트래킹 상태 ────────────────────────────
     this.el.addEventListener('realityready', () => {
       this.setTracking('ok', '트래킹 준비됨');
-      this.setHint('바닥을 탭해서 어디로든 문을 놓아봐');
+      this.setHint(this.editMode
+        ? '저작 모드 — 측위되면 바닥을 탭해 문을 놓고 저장해줘'
+        : '주변을 천천히 비춰줘. 위치가 인식되면 문이 나타나');
       this.initImmersal();
     });
     this.el.addEventListener('xrtrackingstatus', (e) => {
@@ -133,19 +151,45 @@ AFRAME.registerComponent('dora-experience', {
     Log.info('[app] 맵 원점 마커 표시 (X 빨강 / Y 초록 / Z 파랑)');
   },
 
-  onLocalized() {
+  /**
+   * 측위 성공 시 호출. 서버에 저장된 배치 좌표를 가져와 그 자리에 세운다.
+   * 이게 VPS 의 본체다 — 누가 언제 와도 같은 자리, 같은 각도.
+   */
+  async onLocalized(response) {
     if (this.cfg.debug) this.showOriginMarker();
-    const anchor = this.cfg.immersal.anchor;
-    if (anchor && anchor.enabled && !this.door) {
-      const q = new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(0, (anchor.rotationY || 0) * Math.PI / 180, 0)
-      );
-      const p = anchor.position || {x: 0, y: 0, z: 0};
-      this.placeDoorLocal(new THREE.Vector3(p.x, p.y, p.z), q);
-      this.setHint('실제 공간에 정렬 완료! 문이 저장된 위치에 나타났어');
-    } else {
-      this.setHint('실제 공간에 정렬 완료!');
+
+    const mapId = response && response.map;
+    let anchor = null;
+
+    if (mapId && mapId > 0) {
+      try {
+        const r = await fetch(`/api/anchor/${mapId}`);
+        const j = await r.json();
+        if (j.found) {
+          anchor = j.anchor;
+          Log.info(`[anchor] 서버 배치 좌표 사용 (map ${mapId}, 저장 ${anchor.updated || '-'})`);
+        }
+      } catch (e) {
+        Log.warn('[anchor] 조회 실패:', e.message);
+      }
     }
+
+    // 서버에 없으면 config 의 기본값으로 (최초 저작 전 상태)
+    if (!anchor) {
+      const c = this.cfg.immersal.anchor;
+      if (!c || !c.enabled) { this.setHint('정렬 완료 — 배치 좌표가 아직 없어'); return; }
+      anchor = {position: c.position, rotationY: c.rotationY || 0};
+      Log.info('[anchor] 저장된 좌표 없음 → config 기본값 사용');
+    }
+
+    const p = anchor.position;
+    this.placeDoorLocal(
+      new THREE.Vector3(p.x, p.y, p.z),
+      (anchor.rotationY || 0) * Math.PI / 180
+    );
+    this.setHint(this.editMode
+      ? '저작 모드 — 바닥을 탭해 옮기고, 각도 맞춘 뒤 저장'
+      : '문을 탭하면 열려');
   },
 
   /**
@@ -160,7 +204,7 @@ AFRAME.registerComponent('dora-experience', {
       new THREE.Vector3(worldPoint.x, worldPoint.y, worldPoint.z)
     );
 
-    // 문이 사용자를 바라보도록 — 월드 기준으로 각을 구한 뒤 루트 회전을 상쇄한다.
+    // 문이 사용자를 바라보도록 — 월드 기준 각을 구한 뒤 루트 회전을 상쇄한다.
     const camWorld = new THREE.Vector3();
     this.el.camera.el.object3D.getWorldPosition(camWorld);
     const worldYaw = Math.atan2(camWorld.x - worldPoint.x, camWorld.z - worldPoint.z);
@@ -168,12 +212,13 @@ AFRAME.registerComponent('dora-experience', {
     const rootQ = new THREE.Quaternion();
     root3D.getWorldQuaternion(rootQ);
     q.premultiply(rootQ.invert());
+    const localYaw = new THREE.Euler().setFromQuaternion(q, 'YXZ').y;
 
-    this.placeDoorLocal(local, q);
+    this.placeDoorLocal(local, localYaw);
   },
 
-  /** 콘텐츠 루트의 로컬 좌표(= 측위 성공 시 맵 좌표)에 직접 배치한다. */
-  placeDoorLocal(local, quat) {
+  /** 콘텐츠 루트의 로컬 좌표(= 맵 좌표)와 yaw(라디안)로 직접 배치한다. */
+  placeDoorLocal(local, yawRad) {
     const c = this.cfg.content;
 
     if (!this.door) {
@@ -187,29 +232,58 @@ AFRAME.registerComponent('dora-experience', {
       door.addEventListener('door-opened', () => this.setHint('문 안쪽을 들여다봐! 주변 아이템도 모아보고'));
       this.door = door;
       this.spawnItems(local);
-      this.setHint('문을 탭하면 열려');
     }
 
+    this.doorYaw = yawRad || 0;
     this.door.object3D.position.copy(local);
-    if (quat) this.door.object3D.quaternion.copy(quat);
-
-    // 이 좌표를 config.js 의 anchor 에 박아두면 다음부터 자동으로 같은 자리에 나온다.
-    const f = (n) => Number(n.toFixed(3));
-    Log.info(`[app] 배치 좌표(맵 기준): {x: ${f(local.x)}, y: ${f(local.y)}, z: ${f(local.z)}}`);
+    this.door.object3D.quaternion.setFromEuler(new THREE.Euler(0, this.doorYaw, 0));
+    this.updateEditReadout();
   },
 
-  /** 디버그용 — 트래킹/측위 상태와 무관하게 카메라 정면 2m 바닥에 소환한다. */
-  summonInFront() {
-    const cam = this.el.camera.el.object3D;
-    const camWorld = new THREE.Vector3();
-    cam.getWorldPosition(camWorld);
-    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()));
-    dir.y = 0;
-    dir.normalize();
-    const target = camWorld.clone().addScaledVector(dir, 2);
-    target.y = 0;   // 바닥 높이
-    Log.info(`[app] 정면 소환 → world(${target.x.toFixed(2)}, ${target.y.toFixed(2)}, ${target.z.toFixed(2)})`);
-    this.placeDoor(target);
+  /** 저작 모드 — 문을 회전시킨다. */
+  rotateDoor(deltaDeg) {
+    if (!this.door) { this.setHint('먼저 바닥을 탭해서 문을 놓아줘'); return; }
+    this.doorYaw += deltaDeg * Math.PI / 180;
+    this.door.object3D.quaternion.setFromEuler(new THREE.Euler(0, this.doorYaw, 0));
+    this.updateEditReadout();
+  },
+
+  /** 저작 모드 — 현재 배치를 서버에 저장한다. 이후 접속자 모두에게 적용된다. */
+  async saveAnchor() {
+    if (!this.door) { this.setHint('먼저 문을 배치해줘'); return; }
+    const mapId = this.localizedMapId;
+    if (!mapId) { this.setHint('측위가 성공해야 저장할 수 있어 (맵 좌표 기준이라서)'); return; }
+
+    const p = this.door.object3D.position;
+    const body = {
+      position: {x: p.x, y: p.y, z: p.z},
+      rotationY: this.doorYaw * 180 / Math.PI,
+    };
+    try {
+      const r = await fetch(`/api/anchor/${mapId}`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        this.setHint('저장 완료! 이제 누가 접속해도 이 자리에 나타나');
+        Log.info(`[anchor] 저장됨 map=${mapId} ${JSON.stringify(body)}`);
+      } else {
+        this.setHint('저장 실패 — 로그 확인');
+        Log.error('[anchor] 저장 실패:', JSON.stringify(j));
+      }
+    } catch (e) {
+      Log.error('[anchor] 저장 오류:', e.message);
+    }
+  },
+
+  updateEditReadout() {
+    const el = document.querySelector('#editReadout');
+    if (!el || !this.door) return;
+    const p = this.door.object3D.position;
+    const f = (n) => n.toFixed(2);
+    el.textContent = `x ${f(p.x)}  y ${f(p.y)}  z ${f(p.z)}  /  ${(this.doorYaw * 180 / Math.PI).toFixed(0)}°`;
   },
 
   spawnItems(center) {
@@ -243,7 +317,7 @@ AFRAME.registerComponent('dora-experience', {
     this.count = 0;
     this.total = 0;
     this.hud.count.textContent = '0 / 0';
-    this.setHint('바닥을 탭해서 어디로든 문을 놓아봐');
+    this.setHint(this.editMode ? '저작 모드 — 바닥을 탭해 문을 놓아줘' : '주변을 비춰줘');
     Log.info('[app] 리셋됨');
   },
 

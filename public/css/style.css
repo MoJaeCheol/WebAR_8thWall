@@ -93,3 +93,11 @@ body {
 #log.on { display: block; }
 #log .e { color: #ff8a8a; }
 #log .w { color: #ffd900; }
+
+/* ── 저작 모드 전용 UI ─────────────────────────────────── */
+.edit-only { display: none; }
+body.edit-mode .edit-only { display: flex; }
+body.edit-mode #editReadout {
+  font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(230, 0, 18, .75);
+}
