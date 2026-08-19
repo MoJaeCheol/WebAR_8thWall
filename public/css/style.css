@@ -84,8 +84,9 @@ body {
 
 /* ── 디버그 로그 ───────────────────────────────────────── */
 #log {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 200;
-  max-height: 26vh; overflow-y: auto; display: none;
+  /* HUD(z-index 100) 보다 아래에 둔다. 위에 있으면 하단 버튼을 통째로 덮어버린다. */
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 90;
+  max-height: 22vh; overflow-y: auto; display: none;
   background: rgba(0, 0, 0, .82); color: #9fe8b0;
   font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
   padding: 8px 10px; white-space: pre-wrap; word-break: break-all;
@@ -100,4 +101,26 @@ body.edit-mode .edit-only { display: flex; }
 body.edit-mode #editReadout {
   font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
   background: rgba(230, 0, 18, .75);
+}
+
+/* 디버그 로그가 켜지면 하단 버튼들을 로그 위로 밀어 올린다 */
+body.debug-on .hud-bottom { padding-bottom: 23vh; }
+#log.collapsed { max-height: 26px; }
+#logToggle {
+  position: fixed; right: 10px; z-index: 95;
+  bottom: calc(22vh + 4px);
+  background: rgba(0, 0, 0, .8); color: #9fe8b0;
+  border: 0; border-radius: 6px 6px 0 0; padding: 3px 10px;
+  font: 11px ui-monospace, Menlo, Consolas, monospace; cursor: pointer;
+  display: none;
+}
+body.debug-on #logToggle { display: block; }
+body.debug-on.log-collapsed .hud-bottom { padding-bottom: 40px; }
+body.log-collapsed #logToggle { bottom: 26px; }
+
+.debug-only { display: none; }
+body.debug-on .debug-only { display: inline-flex; }
+#trackReadout {
+  font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(0, 80, 40, .82);
 }

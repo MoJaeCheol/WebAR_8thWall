@@ -7,7 +7,20 @@
   function panel() {
     if (el) return el;
     el = document.getElementById('log');
-    if (el && enabled) el.classList.add('on');
+    if (el && enabled) {
+      el.classList.add('on');
+      document.body.classList.add('debug-on');
+      // 로그가 하단 버튼을 가리지 않도록 접을 수 있게 한다.
+      const btn = document.createElement('button');
+      btn.id = 'logToggle';
+      btn.textContent = '로그 접기';
+      btn.addEventListener('click', () => {
+        const collapsed = document.body.classList.toggle('log-collapsed');
+        el.classList.toggle('collapsed', collapsed);
+        btn.textContent = collapsed ? '로그 펼치기' : '로그 접기';
+      });
+      document.body.appendChild(btn);
+    }
     return el;
   }
 

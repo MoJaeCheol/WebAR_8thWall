@@ -27,6 +27,10 @@ AFRAME.registerComponent('dora-experience', {
       if (!this.editMode) return;
       this.placeDoor(e.detail.intersection.point);
     });
+    if (this.cfg.debug) {
+      // 렌더 루프(tick)에 걸면 루프가 멈췄을 때 계측도 같이 멈춰 이상 신호를 놓친다.
+      setInterval(() => this.updateReadout(), 250);
+    }
     if (this.editMode) {
       document.body.classList.add('edit-mode');
       Log.info('[app] 저작 모드 — 배치 후 저장하면 모든 접속자에게 적용된다');
@@ -97,15 +101,11 @@ AFRAME.registerComponent('dora-experience', {
       },
     });
 
-    // 스케일을 미터로 확정한다.
-    // xrweb 의 기본값 responsive 는 "1프레임 카메라 기준 정규화 좌표"라 미터가 아니고,
-    // 실제 미터로 만들어진 Immersal 맵과 합성하면 스케일이 어긋난다.
-    try {
-      XR8.XrController.configure({scale: 'absolute'});
-      Log.info('[8thwall] scale = absolute (미터 단위)');
-    } catch (e) {
-      Log.warn('[8thwall] scale 설정 실패:', e.message);
-    }
+    // 스케일(absolute)은 index.html 의 xrweb 속성에서 이미 설정된다.
+    // 여기서 XrController.configure() 를 또 부르면 xrweb 이 넣어둔 다른 설정을
+    // 덮어쓸 수 있어 호출하지 않는다. 실제 적용값만 확인해 로그로 남긴다.
+    const sceneScale = (this.el.getAttribute('xrweb') || {}).scale;
+    Log.info(`[8thwall] scale = ${sceneScale}${sceneScale === 'absolute' ? ' (미터 단위)' : ' ⚠ absolute 여야 함'}`);
 
     const conv = cfg.poseConvention;
     this.localizer.autoConvention = (conv === 'auto' || conv === undefined);
@@ -327,6 +327,41 @@ AFRAME.registerComponent('dora-experience', {
     const name = this.localizer.setConvention(this.localizer.conventionIndex + 1);
     document.querySelector('#convIdx').textContent = this.localizer.conventionIndex;
     this.setHint(`정렬 규약 ${name} — 문 위치가 맞아?`);
+  },
+
+  /**
+   * 트래킹이 실제로 도는지 눈으로 판정하기 위한 계측.
+   *
+   * 걸어다닐 때 "거리" 가 변하면 문은 공간에 고정된 것이고,
+   * 거리가 그대로면 문이 카메라를 따라다니는 것이다 (= 월드 트래킹 미동작).
+   */
+  updateReadout() {
+    if (!this.cfg.debug) return;
+
+    const el = document.querySelector('#trackReadout');
+    if (!el) return;
+
+    const cam = new THREE.Vector3();
+    this.el.camera.el.object3D.getWorldPosition(cam);
+    const f = (n) => n.toFixed(2);
+
+    // 카메라가 실제로 움직이고 있는지 (SLAM 생존 확인).
+    // 실기기는 손떨림만으로도 늘 미세하게 움직이므로, 연속으로 완전히 멎어 있으면
+    // 월드 트래킹이 죽었다는 뜻이다.
+    const moved = this._prevCam ? cam.distanceTo(this._prevCam) : 0;
+    this._stillCount = moved < 0.001 ? (this._stillCount || 0) + 1 : 0;
+    this._prevCam = cam.clone();
+
+    let text = `cam ${f(cam.x)},${f(cam.y)},${f(cam.z)}`;
+    if (this.door) {
+      const d = new THREE.Vector3();
+      this.door.object3D.getWorldPosition(d);
+      text += `  |  문까지 ${f(cam.distanceTo(d))}m`;
+    }
+    text += this._stillCount > 8
+      ? '  |  카메라 정지 ⚠ 트래킹 확인'
+      : `  |  ${(moved * 1000).toFixed(0)}mm`;
+    el.textContent = text;
   },
 
   // ── HUD ───────────────────────────────────────────────
