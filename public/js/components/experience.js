@@ -169,6 +169,7 @@ AFRAME.registerComponent('dora-experience', {
     this.localizer.gravityLock = cfg.gravityLock !== false;
     if (cfg.smoothing !== undefined) this.localizer.smoothing = cfg.smoothing;
     if (cfg.outlierMeters !== undefined) this.localizer.outlierMeters = cfg.outlierMeters;
+    this.localizer.autoCalibrate = cfg.autoCalibrate !== false;
     this.localizer.attachPipeline(cfg.maxDimension);
 
     const ready = await this.localizer.checkServer();
@@ -316,45 +317,59 @@ AFRAME.registerComponent('dora-experience', {
   },
 
   // ── 진단 표시 ─────────────────────────────────────────
+  /**
+   * 진단 표시.
+   *
+   * 핵심은 편차다. 여러 표본 쌍의 스케일이 일정하게 1 을 벗어나면 계통 오차(코드),
+   * 제각각이면 측위가 불안정한 것(맵 품질)이다. 판정 문구가 이 둘을 갈라 준다.
+   */
   showDiagnostics(d) {
-    const scale = document.querySelector('#devScale');
-    const agree = document.querySelector('#devAgree');
-    const verdict = document.querySelector('#devVerdict');
+    const $ = (id) => document.querySelector(id);
+    const scale = $('#devScale');
     if (!scale) return;
+
+    if (d && d.focal) {
+      $('#devFocal').textContent =
+        `${d.focal.f.toFixed(0)}px (×${d.focal.calib.toFixed(3)}${d.calibrations ? `, ${d.calibrations}회 보정` : ''})`;
+    }
 
     if (!d || !d.ready) {
       scale.textContent = '–';
-      agree.textContent = '–';
-      verdict.className = 'verdict';
-      verdict.textContent = `측위 ${d ? d.samples : 0}회. 1m 이상 걸어가서 한 번 더 측위되면 검증값이 나와요.`;
+      $('#devPairs').textContent = `표본 ${d ? d.samples : 0}개`;
+      $('#devAgree').textContent = '–';
+      $('#devVerdict').className = 'verdict';
+      $('#devVerdict').textContent =
+        `측위 표본 ${d ? d.samples : 0}개. 1.2m 이상 떨어진 두 지점에서 측위돼야 검증값이 나옵니다. 방을 가로질러 걸어 보세요.`;
       return;
     }
 
-    scale.textContent = d.scaleRatio.toFixed(3);
-    agree.textContent = `${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(1)}°`;
-    const shiftEl = document.querySelector('#devShift');
-    if (shiftEl) {
-      shiftEl.textContent = `${(d.lastShift * 100).toFixed(0)}cm`
-        + (d.rejected ? `  (무시 ${d.rejected})` : '');
-    }
+    scale.textContent = `${d.scaleRatio.toFixed(3)}  (±${(d.spread * 100).toFixed(0)}%)`;
+    $('#devPairs').textContent = `${d.pairs}쌍 / ${d.baseline.toFixed(1)}m · 측위오차 ≈±${d.estError.toFixed(2)}m`;
+    $('#devAgree').textContent = `${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(1)}°`;
+    $('#devShift').textContent = `${(d.lastShift * 100).toFixed(0)}cm` + (d.rejected ? `  (무시 ${d.rejected})` : '');
 
-    const problems = [];
-    if (Math.abs(d.scaleRatio - 1) >= 0.1) {
-      problems.push(`스케일이 ${d.scaleRatio.toFixed(2)}배 어긋남 — 씬이 미터 단위가 아닙니다`);
-    }
-    if (d.agreePos >= 0.5 || d.agreeDeg >= 8) {
-      problems.push(`두 지점 측위 결과가 ${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(0)}° 어긋남 — 맵 품질 또는 좌표 규약 문제`);
-    }
-    if (d.lastShift >= 0.3) {
-      problems.push(`정렬이 매 측위마다 ${(d.lastShift * 100).toFixed(0)}cm 움직임 — 측위가 불안정합니다`);
-    }
+    const verdict = $('#devVerdict');
+    const off = Math.abs(d.scaleRatio - 1);
 
-    if (problems.length) {
-      verdict.className = 'verdict bad';
-      verdict.textContent = '문제 발견: ' + problems.join(' · ');
-    } else {
+    if (d.ok) {
       verdict.className = 'verdict ok';
-      verdict.textContent = '정상. 맵과 정렬이 모두 신뢰할 만합니다. 이제 문 위치를 지정하세요.';
+      verdict.textContent = '정상. 맵과 정렬이 모두 신뢰할 만합니다. 문 위치를 지정하세요.';
+    } else if (!d.systematic) {
+      verdict.className = 'verdict bad';
+      verdict.textContent =
+        `측위가 불안정합니다 — 측위마다 위치가 ±${d.estError.toFixed(2)}m 씩 다르게 나옵니다 ` +
+        `(편차 ±${(d.spread * 100).toFixed(0)}%). 값이 계통적이지 않고 제각각이므로 ` +
+        '코드가 아니라 맵 품질 문제일 가능성이 큽니다. 더 촘촘히, 여러 각도로 재스캔을 권합니다.';
+    } else if (off >= 0.1) {
+      verdict.className = 'verdict bad';
+      verdict.textContent =
+        `스케일이 ${d.scaleRatio.toFixed(2)}배로 일정하게 어긋납니다 (편차 ±${(d.spread * 100).toFixed(0)}%). ` +
+        '계통 오차이므로 초점거리 자가 보정이 곧 적용됩니다. 계속 걸어 다니며 측위해 주세요.';
+    } else {
+      verdict.className = 'verdict bad';
+      verdict.textContent =
+        `스케일은 맞는데(${d.scaleRatio.toFixed(2)}) 두 지점 변환이 ${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(0)}° 어긋납니다. ` +
+        '좌표 규약 또는 맵 정확도 문제입니다.';
     }
   },
 
