@@ -153,3 +153,12 @@ body.dev-collapsed #devPanel .body { display: none; }
 #log.on { display: block; }
 #log .e { color: #ff8a8a; }
 #log .w { color: #ffd900; }
+
+#devReportOut {
+  display: none; margin: 8px 0 0; padding: 8px;
+  background: rgba(0, 0, 0, .5); border-radius: 8px;
+  font: 10px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-all; color: #9fe8b0;
+  -webkit-user-select: text; user-select: text;
+}
+#devReportOut.on { display: block; }

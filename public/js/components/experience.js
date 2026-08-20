@@ -75,6 +75,7 @@ AFRAME.registerComponent('dora-experience', {
       $('#devToggleLog').classList.toggle('active', on);
       $('#devToggleLog').textContent = on ? '로그 닫기' : '로그 보기';
     });
+    $('#devReport').addEventListener('click', () => this.copyReport());
     $('#devResetFocal').addEventListener('click', () => {
       if (this.localizer) this.localizer.resetFocal();
     });
@@ -375,6 +376,35 @@ AFRAME.registerComponent('dora-experience', {
         `스케일은 맞는데(${d.scaleRatio.toFixed(2)}) 두 지점 변환이 ${d.agreePos.toFixed(2)}m / ${d.agreeDeg.toFixed(0)}° 어긋납니다. ` +
         '좌표 규약 또는 맵 정확도 문제입니다.';
     }
+  },
+
+  /** 진단 상태를 한 덩어리 텍스트로 만들어 클립보드에 넣고 화면에도 띄운다. */
+  copyReport() {
+    const L = this.localizer;
+    const d = L && L.diagnostics;
+    const lines = [
+      `map=${this.localizedMapId || '-'} 측위=${L ? `${L.successes}/${L.attempts}` : '-'}`,
+      `f=${L && L.focalPx ? L.focalPx.toFixed(0) : '-'}px(${L ? L.focalSource : '-'}) 보정=${L ? L.calibrations : 0}회`,
+      `규약=${L ? L.conventionName() : '-'} 중력잠금=${L && L.gravityLock ? 'on' : 'off'}`,
+      d && d.ready
+        ? `스케일=${d.scaleRatio.toFixed(3)} 편차=${(d.spread * 100).toFixed(0)}% 측위오차≈±${d.estError.toFixed(2)}m`
+        : `스케일=미측정(표본 ${d ? d.samples : 0}, 1.2m 이상 이동 필요)`,
+      d && d.ready
+        ? `일치=${d.agreePos.toFixed(2)}m/${d.agreeDeg.toFixed(1)}° 쌍=${d.pairs} 기준선=${d.baseline.toFixed(1)}m`
+        : '',
+      `흔들림=${L ? (L.lastShift * 100).toFixed(0) : '-'}cm 무시=${L ? L.rejected : 0}회`,
+      `특징점=${document.querySelector('#devPoints').textContent}`,
+    ].filter(Boolean);
+    const text = lines.join('\n');
+    const out = document.querySelector('#devReportOut');
+    out.textContent = text;
+    out.classList.add('on');
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text)
+        .then(() => this.setHint('진단 리포트를 클립보드에 복사했어'))
+        .catch(() => this.setHint('복사 실패 — 아래 텍스트를 직접 선택해줘'));
+    }
+    Log.info('[리포트]\n' + text);
   },
 
   updateDevReadout() {
