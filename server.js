@@ -109,11 +109,30 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
+// ── 자체 VPS (Python FastAPI, 127.0.0.1:8000) ─────────────────
+// 폰은 이 Node 서버(HTTPS)에만 붙고, 여기서 로컬 Python 으로 중계한다.
+// 단일 오리진이라 CORS 불필요, Python 쪽 TLS 불필요.
+const VPS_URL = process.env.VPS_URL || 'http://127.0.0.1:8000';
+let vpsProbe = { at: 0, ok: false, maps: [] };
+
+async function probeVps() {
+  if (Date.now() - vpsProbe.at < 10_000) return vpsProbe;
+  try {
+    const r = await fetch(`${VPS_URL}/health`, { signal: AbortSignal.timeout(1500) });
+    const j = await r.json();
+    vpsProbe = { at: Date.now(), ok: Boolean(j.ok), maps: j.maps || [] };
+  } catch (e) {
+    vpsProbe = { at: Date.now(), ok: false, maps: [] };
+  }
+  return vpsProbe;
+}
+
 /**
  * 클라이언트가 서버 설정을 알 수 있게 하는 엔드포인트.
  * 토큰 자체는 내려보내지 않고 "설정 여부"만 알려준다.
  */
-app.get('/api/config', (req, res) => {
+app.get('/api/config', async (req, res) => {
+  const vps = await probeVps();
   res.json({
     buildId: BUILD_ID,
     immersalConfigured: Boolean(process.env.IMMERSAL_TOKEN && process.env.IMMERSAL_MAP_IDS),
@@ -121,7 +140,43 @@ app.get('/api/config', (req, res) => {
       .split(',')
       .map((s) => Number(s.trim()))
       .filter(Boolean),
+    vps: { configured: vps.ok, mapIds: vps.maps },
   });
+});
+
+/** 자체 VPS 측위 프록시. 요청 형식은 Immersal 프록시와 동일 {b64, fx, fy, ox, oy}. */
+app.post('/api/vps/localize', async (req, res) => {
+  const started = Date.now();
+  try {
+    const r = await fetch(`${VPS_URL}/localize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body || {}),
+    });
+    const json = await r.json();
+    console.log(`[vps] ${r.status} ${Date.now() - started}ms → ${JSON.stringify(json).slice(0, 200)}`);
+    res.status(r.status).json(json);
+  } catch (e) {
+    console.error('[vps] 요청 실패:', e.message);
+    res.status(502).json({ error: 'vps-unreachable', message: 'Python 측위 서버(:8000)가 떠 있는지 확인하세요. ' + e.message });
+  }
+});
+
+/** 자체 맵 포인트클라우드 중계 (PLY — 기존 AR 오버레이 디버그 뷰가 그대로 쓴다). */
+app.get('/api/vps/map/:mapId/pointcloud', async (req, res) => {
+  const key = `vps:${req.params.mapId}`;
+  if (pointCloudCache.has(key)) {
+    return res.type('application/octet-stream').send(pointCloudCache.get(key));
+  }
+  try {
+    const r = await fetch(`${VPS_URL}/map/${encodeURIComponent(req.params.mapId)}/pointcloud.ply`);
+    if (!r.ok) return res.status(r.status).json({ error: 'upstream', status: r.status });
+    const buf = Buffer.from(await r.arrayBuffer());
+    pointCloudCache.set(key, buf);
+    res.type('application/octet-stream').send(buf);
+  } catch (e) {
+    res.status(502).json({ error: 'vps-unreachable', message: e.message });
+  }
 });
 
 /**

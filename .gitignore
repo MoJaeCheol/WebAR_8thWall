@@ -2,3 +2,17 @@ node_modules/
 certs/
 .env
 .DS_Store
+
+# Python (자체 VPS)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 캡처 데이터셋·빌드된 맵 (용량 큼 — 필요 시 별도 보관)
+data/datasets/
+data/maps/
+
+# Xcode (capture-ios 프로젝트는 Mac 에서 생성)
+capture-ios/*.xcodeproj
+xcuserdata/

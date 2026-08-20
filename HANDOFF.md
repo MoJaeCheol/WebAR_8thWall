@@ -1,8 +1,11 @@
 # 인수인계 — 다음 세션용
 
-작성 시점 기준 HEAD: `dbe07df`
 저장소: https://github.com/MoJaeCheol/WebAR_8thWall
 배포: Render (`*.onrender.com`) — `IMMERSAL_TOKEN`, `IMMERSAL_MAP_IDS` 환경변수 필요
+
+> **2026-08-20 갱신**: 자체 VPS(LiDAR 기반)를 1급 경로로 결정하고 §5 계획의
+> P0~P3 를 구현했다. PC 검증(합성 테스트 12개, 서버 스모크) 완료, 실기기 미검증.
+> 상세는 §5-1 과 `vps/README.md`, `capture-ios/README.md`.
 
 ---
 
@@ -183,26 +186,73 @@
 
 ### 확인 필요
 
-- [ ] **Mac 사양** (모델 연식 / macOS 버전) 과 **iPhone iOS 버전**
-      → Xcode 로 직접 캡처 앱을 빌드할 수 있는지 결정
-- [ ] 안 되면 캡처 단계만 무료 앱 사용 (VPS 본체는 여전히 자체 구현)
+- [x] 기기: **iPhone Pro (LiDAR 있음)**, 캡처는 **자작 앱** (Mac+Xcode) — 사용자 확정
+- [ ] Mac 에서 캡처 앱 첫 빌드 (절차: `capture-ios/README.md`)
+
+## 5-1. 구현 현황 (2026-08-20 — 이 세션에서 구현)
+
+**LiDAR 를 1급 경로로 승격한 근거** (비교 분석 후 사용자 결정):
+맵이 진짜 미터(±1~5cm) / ARKit 포즈라 8th Wall 트래킹 불안정 문제를 우회 /
+공장 캘리브레이션 intrinsics 라 초점거리 추정 불필요 / 오클루전·실측 저작 가능.
+LiDAR 유효거리(~5m) 밖 특징점은 포즈 기지 삼각측량으로 폴백(하이브리드 빌더).
+단 **런타임(관람객 폰)은 여전히 8th Wall** — LiDAR 는 맵 제작 전용이다.
+
+### 완료 (PC 검증)
+
+| 단계 | 내용 | 검증 |
+|---|---|---|
+| P0 기하·규약 | `vps/common/geometry.py` 가 GL↔CV 변환 단일 소유. 응답은 GL camera-to-map (Immersal 필드명) → 클라이언트 규약 0번 | 합성 왕복 테스트 |
+| P1 맵 빌더 | SIFT+rootSIFT → 깊이 역투영(1급)/삼각측량(폴백) → 재투영 검증 → npz+PLY | 합성 E2E |
+| P1 측위 서버 | FastAPI :8000, FLANN+solvePnPRansac, 수락 게이트 inliers≥20 | 합성 측위 오차 ~0 |
+| P2 캡처 앱 | `capture-ios/` Swift 소스 + 빌드 README (Xcode 프로젝트는 Mac 에서 생성) | 미빌드 |
+| P2 가져오기 | `import_dataset.py` — zip 검증 → data/datasets/ | 코드만 |
+| P3 통합 | Node `/api/vps/*` 프록시, 클라이언트 백엔드 토글(개발자 패널), sceneScale 즉시적용 버그 수정, 측위 재시작 버튼 | 스모크 통과 |
+
+`python -m pytest vps/tests` **12개 전부 통과** (기하 왕복 / JSON 규약 왕복 /
+역투영·삼각측량 정확도 / fx 그리드 서치 / 맵 IO·PLY / 측위 / 디스크 E2E).
+
+### 테스트가 잡아낸 함정 (재발 주의)
+
+- **다중 서술자 ratio test**: 맵이 포인트당 서술자 ≤4개를 보관하므로 knn=2 의
+  1·2등이 같은 점의 관측들이 되어 ratio≈1 → 참 대응 전멸. 2등을 "다른 3D점"
+  기준으로 잡아야 한다 (`localizer._match_map` 주석 참조).
+- **입력 B 에피폴라 필터**: fx 가정 오차가 에피폴라 거리를 부풀리므로
+  assumed intrinsics 는 12px, device-reported 는 3px 임계값.
+
+### 남은 것 (P4 — 실기기)
+
+1. Mac 에서 `capture-ios` 빌드 → 사무실 캡처 80~150장 → zip 을 PC 로
+2. `import_dataset` → `build_map` → PLY 를 육안 검사 (방 형태가 보여야 함)
+3. 두 서버 기동(§8) → 폰 웹앱 → 개발자 모드 → **측위 백엔드: 자체 VPS**
+4. 기존 진단으로 판정 (맵이 미터이므로 스케일 비율 = 씬 스케일 측정값 그대로)
+5. 같은 동선으로 Immersal A/B (`진단 리포트 복사` 비교)
+6. 병행: 코칭 오버레이/1m 기준자 확인 (§2 의 미해결 문제 — 런타임 쪽은 그대로다)
+7. 1280 캡처 해상도에서 FPS 확인 — 드랍이면 config.js `maxDimension: 960`
 
 ---
 
 ## 6. 코드 지도
 
 ```
-server.js                    HTTP/HTTPS 서버, Immersal 프록시, 앵커 저장소,
+server.js                    HTTP/HTTPS 서버, Immersal/자체VPS 프록시, 앵커 저장소,
                              포인트클라우드 중계, BUILD_ID 캐시 무효화
 public/
   index.html                 씬 정의. 스크립트 로드 순서 주의(a-scene 파싱 전 컴포넌트 등록)
   js/
-    config.js                ⚙ 튜닝값 전부 여기
-    immersal.js              측위 클라이언트 — 규약/초점거리/진단/닮음변환 정렬
-    components/experience.js 개발자·관람 모드, 배치, 앵커, 진단 UI
-    ply.js                   맵 포인트클라우드 파서
-    png.js                   8-bit 그레이스케일 PNG 인코더 (Immersal 입력 포맷)
+    config.js                ⚙ 튜닝값 전부 여기 (vps.backend 포함)
+    immersal.js              측위 클라이언트 — BACKENDS(immersal/selfvps) 토글,
+                             규약/초점거리/진단/닮음변환 정렬
+    components/experience.js 개발자·관람 모드, 배치, 앵커, 진단 UI, 백엔드 토글
+    ply.js                   맵 포인트클라우드 파서 (자체 맵 PLY 도 동일 형식)
+    png.js                   8-bit 그레이스케일 PNG 인코더 (측위 요청 이미지)
+vps/                         자체 VPS — 맵 빌더 + 측위 서버 (Python, vps/README.md)
+  common/geometry.py         ★ 좌표 규약 단일 소유 (GL↔CV) — 여기만 만진다
+  builder/                   import_dataset / build_map / features / matching / …
+  server/                    FastAPI :8000 (localizer + main)
+  tests/                     합성 E2E — python -m pytest vps/tests
+capture-ios/                 LiDAR 캡처 앱 (Swift 소스, Mac 에서 빌드 — README 참조)
 data/anchors.json            맵 ID별 문 배치 좌표 (Render 는 휘발성 — 커밋해야 영구)
+data/datasets/, data/maps/   캡처·빌드 산출물 (.gitignore — 용량)
 ```
 
 `README.md` 에 각 결정의 근거가 상세히 적혀 있다. 특히:
@@ -244,6 +294,15 @@ npm install
 npm start          # HTTP :3000 (PC), HTTPS :3443 (폰, LAN IP 안내 출력)
 ```
 
+자체 VPS 를 쓸 때는 Python 측위 서버를 별도 창에서 함께 띄운다:
+
+```bash
+.venv\Scripts\python -m uvicorn vps.server.main:app --host 127.0.0.1 --port 8000
+```
+
+(최초 1회: `python -m venv .venv` 후 `.venv\Scripts\pip install -r vps\requirements.txt`)
+Node 가 10초마다 :8000 헬스를 프로브해 `/api/config` 의 `vps.configured` 로 알려준다.
+
 Render 환경변수:
 ```
 IMMERSAL_TOKEN     = (개발자 포털에서 복사)
@@ -261,7 +320,8 @@ NODE_ENV           = production
 
 ## 9. 다음 세션 첫 작업
 
-1. **코칭 오버레이 효과 확인** — 앱 시작 시 폰을 앞뒤로 움직인 뒤 1m 기준자 확인.
-   상자가 1m 로 보이면 씬 스케일 해결. 이게 남은 문제의 핵심.
-2. Mac/iOS 버전 확인 → 네이티브 캡처 가능 여부 판단
-3. 자체 VPS **1단계(캡처)** 착수
+1. **Mac 에서 `capture-ios` 빌드** (`capture-ios/README.md` — 5분 절차) → 사무실 캡처
+2. 캡처 zip → `import_dataset` → `build_map` → **PLY 육안 검사** (§5-1 의 P4 절차)
+3. 두 서버 기동 → 폰에서 **자체 VPS 백엔드** 로 측위 → 기존 진단으로 판정 → Immersal A/B
+4. 병행: **코칭 오버레이/1m 기준자 확인** — 런타임 씬 스케일 문제는 여전히 미검증이다.
+   맵이 미터가 됐으므로 스케일 비율 판독이 더 직접적이다 (비율 = 씬 배율 그 자체)

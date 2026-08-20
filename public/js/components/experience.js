@@ -96,6 +96,47 @@ AFRAME.registerComponent('dora-experience', {
       const name = this.localizer.setConvention(this.localizer.conventionIndex + 1);
       Log.info('[dev] 규약 수동 변경 →', name);
     });
+    $('#devBackend').addEventListener('click', () => this.toggleBackend());
+    $('#devRestartLoc').addEventListener('click', () => {
+      const L = this.localizer;
+      if (!L) return;
+      L.attempts = 0;
+      L.startAuto({
+        intervalMs: this.cfg.immersal.intervalMs,
+        maxAttempts: this.cfg.immersal.maxAttempts,
+        continuous: this.cfg.immersal.continuous !== false,
+      });
+      this.setHint('자동 측위를 다시 시작했어');
+      Log.info('[dev] 자동 측위 재시작');
+    });
+  },
+
+  /** Immersal ↔ 자체 VPS 전환. 포인트클라우드·앵커도 백엔드의 맵 기준으로 다시 잡는다. */
+  async toggleBackend() {
+    const L = this.localizer;
+    if (!L) { this.setHint('VPS 초기화 후에 전환할 수 있어'); return; }
+    const next = L.backendName === 'immersal' ? 'selfvps' : 'immersal';
+    L.setBackend(next);
+    localStorage.setItem('vpsBackend', next);
+    this.updateBackendLabel();
+
+    // 맵이 바뀌므로 이전 맵의 포인트클라우드·앵커 캐시를 버린다
+    if (this.pointCloud) {
+      this.pointCloud.parentNode.removeChild(this.pointCloud);
+      this.pointCloud = null;
+      const btn = document.querySelector('#devTogglePoints');
+      btn.classList.remove('active');
+      btn.textContent = '맵 특징점 겹쳐 보기';
+    }
+    this.localizedMapId = null;
+    this.savedAnchor = null;
+    this.updateAnchorLabel();
+    await L.checkServer();
+  },
+
+  updateBackendLabel() {
+    const el = document.querySelector('#devBackend');
+    if (el && this.localizer) el.textContent = `측위 백엔드: ${this.localizer.backend.label}`;
   },
 
   setDevMode(on) {
@@ -123,7 +164,7 @@ AFRAME.registerComponent('dora-experience', {
 
     btn.textContent = '불러오는 중…';
     try {
-      const res = await fetch(`/api/map/${this.localizedMapId}/pointcloud`);
+      const res = await fetch(this.localizer.backend.pointcloudUrl(this.localizedMapId));
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const {count, positions, colors} = window.PLY.parse(await res.arrayBuffer());
 
@@ -179,9 +220,18 @@ AFRAME.registerComponent('dora-experience', {
       },
     });
 
+    // 백엔드 선택 (localStorage → config 순). 규약은 백엔드가 정한다.
+    const saved = localStorage.getItem('vpsBackend');
+    const backendName = saved || (this.cfg.vps && this.cfg.vps.backend) || 'immersal';
+    this.localizer.setBackend(backendName);
+    this.updateBackendLabel();
+
+    // Immersal 은 config 로 규약을 수동 고정할 수 있게 남겨둔다 (기본 2번)
     const conv = cfg.poseConvention;
-    this.localizer.autoConvention = (conv === 'auto' || conv === undefined);
-    this.localizer.conventionIndex = this.localizer.autoConvention ? 2 : conv;
+    if (this.localizer.backendName === 'immersal') {
+      this.localizer.autoConvention = (conv === 'auto');
+      if (typeof conv === 'number') this.localizer.conventionIndex = conv;
+    }
     if (cfg.initialFovDeg) this.localizer.initialFovDeg = cfg.initialFovDeg;
     this.localizer.sendOrientationPrior = cfg.sendOrientationPrior === true;
     this.localizer.gravityLock = cfg.gravityLock !== false;
@@ -401,7 +451,7 @@ AFRAME.registerComponent('dora-experience', {
     if (!L) { this.setHint('VPS 초기화 후에 조정할 수 있어'); return; }
     L.autoSceneScale = false;   // 손으로 만진 순간부터 자동 추정을 멈춘다
     L.sceneScale = factor == null ? 1 : L.sceneScale * factor;
-    L.applied = false;          // 새 배율로 정렬을 다시 잡는다
+    L.reapply();                // 새 배율로 즉시 재정렬 (다음 측위를 기다리지 않는다)
     if (this.ruler) { this.toggleRuler(); this.toggleRuler(); }   // 기준자 다시 그리기
     this.setHint(`씬 배율 ${L.sceneScale.toFixed(3)} — 상자가 실제 1m 로 보일 때까지 맞춰줘`);
     Log.info(`[씬배율] 수동 조정 → ${L.sceneScale.toFixed(3)} (자동 추정 중단)`);
@@ -483,7 +533,7 @@ AFRAME.registerComponent('dora-experience', {
     const L = this.localizer;
     const d = L && L.diagnostics;
     const lines = [
-      `map=${this.localizedMapId || '-'} 측위=${L ? `${L.successes}/${L.attempts}` : '-'}`,
+      `백엔드=${L ? L.backend.label : '-'} map=${this.localizedMapId || '-'} 측위=${L ? `${L.successes}/${L.attempts}` : '-'}`,
       L && Object.keys(L.mapStats).length
         ? `맵별성공=${Object.entries(L.mapStats).map(([m, n]) => `${m}:${n}`).join(' ')}`
         : '',

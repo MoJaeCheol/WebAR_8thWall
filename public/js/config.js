@@ -28,7 +28,10 @@ window.AR_CONFIG = {
     //    초점거리 자동보정은 기본으로 꺼 둔다. 둘을 동시에 켜면 서로 상쇄하며 발산한다.
     autoCalibrate: false,
     autoSceneScale: true,
-    maxDimension: 640,      // 서버로 보낼 캡처 이미지 최대 변 길이 (클수록 정확/느림)
+    // 서버로 보낼 캡처 이미지 최대 변 길이. 자체 VPS 는 SIFT 매칭이라 해상도가
+    // 정확도에 직결된다 (맵도 1280 기준으로 빌드됨). 실기기에서 프레임 드랍이
+    // 보이면 960 으로 낮출 것.
+    maxDimension: 1280,
 
     // 포즈 규약. Immersal 공식 WebAR 구현(immersal/vps-for-web)이 응답 회전에
     // X축 180°(= diag(1,-1,-1))를 후곱하므로 2번이 정답이다. 추측할 필요가 없다.
@@ -45,15 +48,16 @@ window.AR_CONFIG = {
     sendOrientationPrior: false,
 
     gravityLock: true,
+    // (참고) 문 배치 좌표는 이제 서버 앵커(data/anchors.json, /api/anchor/*)가
+    // 관리한다 — 개발자 모드에서 배치·저장.
+  },
 
-    // 측위 성공 시 콘텐츠를 세울 "맵 좌표계" 위치.
-    // 맵 원점(0,0,0)은 스캔을 시작한 지점이다. 원하는 자리에 두려면
-    // 한 번 탭으로 배치한 뒤 로그의 "배치 좌표(맵 기준)" 값을 여기에 옮겨 적으면 된다.
-    anchor: {
-      enabled: true,
-      position: {x: 0, y: 0, z: 0},
-      rotationY: 0,         // 도(°)
-    },
+  // ── 자체 VPS ─────────────────────────────────────────────
+  // 측위 백엔드 기본값. 개발자 패널 토글로 바꾸면 localStorage 가 우선한다.
+  //   'immersal' — Immersal 공식 서버 (A/B 기준선)
+  //   'selfvps'  — 자체 Python 측위 서버 (vps/, LiDAR 맵)
+  vps: {
+    backend: 'immersal',
   },
 
   // ── 콘텐츠 ────────────────────────────────────────────────

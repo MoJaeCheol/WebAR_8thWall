@@ -40,6 +40,31 @@
     {name: '7:뷰행렬 해석', pre: I(),         post: I(),          transpose: false, invert: true},
   ];
 
+  /**
+   * 측위 백엔드.
+   *
+   * 응답 필드명이 동일(r00..r22, px..pz, map, confidence)하므로 진단·정렬 수학은
+   * 공용이고, 다른 것은 엔드포인트와 좌표 규약뿐이다.
+   *  - immersal: 공식 서버. 규약 2번(diag(1,-1,-1) 후곱)이 정답.
+   *  - selfvps : 자체 Python 서버. 서버가 GL 규약으로 미리 변환해 주므로 0번(항등).
+   */
+  const BACKENDS = {
+    immersal: {
+      label: 'Immersal',
+      localizeUrl: '/api/immersal/localize',
+      pointcloudUrl: (id) => `/api/map/${id}/pointcloud`,
+      convention: 2,
+      configured: (cfg) => Boolean(cfg && cfg.immersalConfigured),
+    },
+    selfvps: {
+      label: '자체 VPS',
+      localizeUrl: '/api/vps/localize',
+      pointcloudUrl: (id) => `/api/vps/map/${id}/pointcloud`,
+      convention: 0,
+      configured: (cfg) => Boolean(cfg && cfg.vps && cfg.vps.configured),
+    },
+  };
+
   const UP = new THREE.Vector3(0, 1, 0);
   const MIN_BASELINE = 1.2;   // 스케일 추정에 쓸 두 측위 사이 최소 이동 거리(m).
                               // 짧으면 측위 오차가 비율을 지배해 값이 요동친다.
@@ -66,6 +91,9 @@
       this.localized = false;
       this.timer = null;
       this.serverReady = false;
+      this.serverConfig = null;     // /api/config 응답 (백엔드별 설정 여부 판단용)
+      this.backendName = 'immersal';
+      this.backend = BACKENDS.immersal;
 
       this.conventionIndex = 0;
       this.autoConvention = true;
@@ -129,15 +157,41 @@
 
     conventionName() { return CONVENTIONS[this.conventionIndex].name; }
 
+    /**
+     * 백엔드 전환 (Immersal ↔ 자체 VPS).
+     * 좌표계가 다르므로 샘플·정렬·활성 맵을 전부 버리고 규약을 백엔드 기본값으로 고정한다.
+     */
+    setBackend(name) {
+      if (!BACKENDS[name]) return this.backendName;
+      this.backendName = name;
+      this.backend = BACKENDS[name];
+      this.samples = [];
+      this.applied = false;
+      this.localized = false;
+      this.activeMapId = null;
+      this.mapStats = {};
+      this.diagnostics = null;
+      this.autoConvention = false;
+      this.conventionIndex = this.backend.convention;
+      this.serverReady = this.backend.configured(this.serverConfig);
+      this.onStatus(this.serverReady ? 'idle' : 'disabled');
+      this.onDiagnostics(null);
+      Log.info(`[vps] 백엔드 → ${this.backend.label} (규약 ${this.conventionName()}, ${this.serverReady ? '준비됨' : '미설정'})`);
+      return this.backendName;
+    }
+
     async checkServer() {
       try {
         const r = await fetch('/api/config');
-        const j = await r.json();
-        this.serverReady = Boolean(j.immersalConfigured);
-        Log.info(`[immersal] 서버 설정: ${this.serverReady ? `맵 ${j.mapIds.join(',')}` : '미설정'}`);
+        this.serverConfig = await r.json();
+        this.serverReady = this.backend.configured(this.serverConfig);
+        const j = this.serverConfig;
+        const maps = this.backendName === 'selfvps'
+          ? (j.vps && j.vps.mapIds || []) : (j.mapIds || []);
+        Log.info(`[vps] ${this.backend.label} 서버: ${this.serverReady ? `맵 ${maps.join(',')}` : '미설정'}`);
       } catch (e) {
         this.serverReady = false;
-        Log.warn('[immersal] /api/config 조회 실패:', e.message);
+        Log.warn('[vps] /api/config 조회 실패:', e.message);
       }
       this.onStatus(this.serverReady ? 'idle' : 'disabled');
       return this.serverReady;
@@ -273,7 +327,7 @@
           Object.assign(body, {qx: q.x, qy: q.y, qz: q.z, qw: q.w, solverType: 1});
         }
 
-        const res = await fetch('/api/immersal/localize', {
+        const res = await fetch(this.backend.localizeUrl, {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(body),
@@ -529,7 +583,10 @@
         if (k > 0.2 && k < 5 && Math.abs(k - this.sceneScale) / this.sceneScale > 0.03) {
           Log.info(`[씬배율] ${this.sceneScale.toFixed(3)} → ${k.toFixed(3)} (맵 1m = 씬 ${k.toFixed(2)}단위)`);
           this.sceneScale = k;
-          this.applied = false;   // 배율이 바뀌었으니 정렬을 다시 잡는다
+          // 다음 측위 성공을 기다리지 않고 마지막 샘플로 즉시 재정렬한다.
+          // (예전에는 applied=false 만 해서 최대 측위 주기만큼, 자동 측위가
+          //  끝난 뒤라면 영영 새 배율이 반영되지 않았다)
+          this.reapply();
         }
       }
       d.sceneScale = this.sceneScale;
@@ -573,6 +630,12 @@
       this.applied = false;
       this.diagnostics = {ready: false, samples: 0, focal: this.lastFocal, calibrations: this.calibrations};
       this.onDiagnostics(this.diagnostics);
+    }
+
+    /** 정렬을 무효화하고 마지막 샘플로 즉시 다시 잡는다 (배율·규약 변경 직후용). */
+    reapply() {
+      this.applied = false;
+      if (this.samples.length) this._applyLatest();
     }
 
     /** 저장된 보정값을 지우고 처음부터 다시 추정한다. */
