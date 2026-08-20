@@ -76,6 +76,15 @@ AFRAME.registerComponent('dora-experience', {
       $('#devToggleLog').textContent = on ? '로그 닫기' : '로그 보기';
     });
     $('#devReport').addEventListener('click', () => this.copyReport());
+    $('#devRuler').addEventListener('click', () => this.toggleRuler());
+    $('#devAutoCal').addEventListener('click', () => {
+      if (!this.localizer) return;
+      const on = !this.localizer.autoCalibrate;
+      this.localizer.autoCalibrate = on;
+      $('#devAutoCal').classList.toggle('active', on);
+      $('#devAutoCal').textContent = on ? '자동보정 켬' : '자동보정 끔';
+      Log.info(`[dev] 초점거리 자동보정 ${on ? '켜짐' : '꺼짐'}`);
+    });
     $('#devResetFocal').addEventListener('click', () => {
       if (this.localizer) this.localizer.resetFocal();
     });
@@ -378,6 +387,72 @@ AFRAME.registerComponent('dora-experience', {
     }
   },
 
+  /**
+   * 씬이 미터 단위인지 직접 확인하는 기준자.
+   *
+   * VPS·맵과 무관하게 8th Wall 씬 스케일만 잰다. 카메라 정면 2m 바닥에
+   * 한 변 1m 짜리 상자를 놓는다. 콘텐츠 루트가 아니라 씬에 직접 붙이므로
+   * 측위 결과에 전혀 영향받지 않는다.
+   *
+   * 실제로 1m 로 보이면 씬은 미터 단위다. 훨씬 크거나 작아 보이면
+   * scale: absolute 가 먹지 않은 것이고, 그 배수가 곧 오차다.
+   */
+  toggleRuler() {
+    const btn = document.querySelector('#devRuler');
+    if (this.ruler) {
+      this.ruler.parentNode.removeChild(this.ruler);
+      this.ruler = null;
+      btn.classList.remove('active');
+      btn.textContent = '1m 기준자';
+      return;
+    }
+
+    const cam = this.el.camera.el.object3D;
+    const camWorld = new THREE.Vector3();
+    cam.getWorldPosition(camWorld);
+    const dir = new THREE.Vector3(0, 0, -1)
+      .applyQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()));
+    dir.y = 0;
+    dir.normalize();
+    const at = camWorld.clone().addScaledVector(dir, 2);
+
+    const g = document.createElement('a-entity');
+    g.setAttribute('position', {x: at.x, y: 0, z: at.z});
+
+    const box = document.createElement('a-box');
+    box.setAttribute('width', 1); box.setAttribute('height', 1); box.setAttribute('depth', 1);
+    box.setAttribute('position', '0 0.5 0');
+    box.setAttribute('material', 'color: #00e5ff; wireframe: true');
+    g.appendChild(box);
+
+    // 바닥에 10cm 눈금 자 (1m)
+    for (let i = 0; i <= 10; i++) {
+      const t = document.createElement('a-box');
+      const big = i % 5 === 0;
+      t.setAttribute('width', 0.012);
+      t.setAttribute('height', 0.004);
+      t.setAttribute('depth', big ? 0.16 : 0.08);
+      t.setAttribute('position', `${-0.5 + i * 0.1} 0.002 0`);
+      t.setAttribute('material', `shader: flat; color: ${big ? '#ffd900' : '#ffffff'}`);
+      g.appendChild(t);
+    }
+
+    // 사람 키 기준 (1.7m) 막대
+    const person = document.createElement('a-cylinder');
+    person.setAttribute('radius', 0.02);
+    person.setAttribute('height', 1.7);
+    person.setAttribute('position', '0.8 0.85 0');
+    person.setAttribute('material', 'shader: flat; color: #ff5aa5');
+    g.appendChild(person);
+
+    this.el.sceneEl.appendChild(g);   // ⚠ contentRoot 가 아니라 씬에 직접
+    this.ruler = g;
+    btn.classList.add('active');
+    btn.textContent = '기준자 숨기기';
+    this.setHint('파란 상자 한 변이 1m, 분홍 막대가 1.7m(사람 키). 실제와 비교해줘');
+    Log.info(`[기준자] 씬 좌표 (${at.x.toFixed(2)}, 0, ${at.z.toFixed(2)}) 에 1m 상자 배치`);
+  },
+
   /** 진단 상태를 한 덩어리 텍스트로 만들어 클립보드에 넣고 화면에도 띄운다. */
   copyReport() {
     const L = this.localizer;
@@ -421,7 +496,10 @@ AFRAME.registerComponent('dora-experience', {
       const moved = this._prevCam ? cam.distanceTo(this._prevCam) : 0;
       this._still = moved < 0.001 ? (this._still || 0) + 1 : 0;
       this._prevCam = cam.clone();
-      camEl.textContent = `${f(cam.x)}, ${f(cam.y)}, ${f(cam.z)}` + (this._still > 8 ? '  정지!' : '');
+      // 카메라 y = 기기가 바닥에서 떨어진 높이. absolute 스케일이면 실제 미터여야 한다.
+      const h = cam.y;
+      const verdict = h > 0.8 && h < 2.2 ? '미터로 보임' : (this._still > 8 ? '정지!' : '⚠ 미터 아닐 수 있음');
+      camEl.textContent = `${f(cam.x)}, ${f(cam.y)}, ${f(cam.z)} · 높이 ${verdict}`;
     }
 
     if (this.localizer) {
