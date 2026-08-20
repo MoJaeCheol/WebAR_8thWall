@@ -75,6 +75,9 @@ AFRAME.registerComponent('dora-experience', {
       $('#devToggleLog').classList.toggle('active', on);
       $('#devToggleLog').textContent = on ? '로그 닫기' : '로그 보기';
     });
+    $('#devResetFocal').addEventListener('click', () => {
+      if (this.localizer) this.localizer.resetFocal();
+    });
     $('#devCycleConv').addEventListener('click', () => {
       if (!this.localizer) return;
       const name = this.localizer.setConvention(this.localizer.conventionIndex + 1);
@@ -165,7 +168,9 @@ AFRAME.registerComponent('dora-experience', {
 
     const conv = cfg.poseConvention;
     this.localizer.autoConvention = (conv === 'auto' || conv === undefined);
-    this.localizer.conventionIndex = this.localizer.autoConvention ? 0 : conv;
+    this.localizer.conventionIndex = this.localizer.autoConvention ? 2 : conv;
+    if (cfg.initialFovDeg) this.localizer.initialFovDeg = cfg.initialFovDeg;
+    this.localizer.sendOrientationPrior = cfg.sendOrientationPrior === true;
     this.localizer.gravityLock = cfg.gravityLock !== false;
     if (cfg.smoothing !== undefined) this.localizer.smoothing = cfg.smoothing;
     if (cfg.outlierMeters !== undefined) this.localizer.outlierMeters = cfg.outlierMeters;
@@ -329,8 +334,7 @@ AFRAME.registerComponent('dora-experience', {
     if (!scale) return;
 
     if (d && d.focal) {
-      $('#devFocal').textContent =
-        `${d.focal.f.toFixed(0)}px (×${d.focal.calib.toFixed(3)}${d.calibrations ? `, ${d.calibrations}회 보정` : ''})`;
+      $('#devFocal').textContent = `${d.focal.f.toFixed(0)}px · ${d.focal.source}`;
     }
 
     if (!d || !d.ready) {

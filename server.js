@@ -144,7 +144,7 @@ app.post('/api/immersal/localize', async (req, res) => {
     });
   }
 
-  const { b64, fx, fy, ox, oy } = req.body || {};
+  const { b64, fx, fy, ox, oy, qx, qy, qz, qw, solverType } = req.body || {};
   if (!b64 || !fx || !fy) {
     return res.status(400).json({ error: 'bad-request', message: 'b64, fx, fy 는 필수입니다.' });
   }
@@ -155,7 +155,12 @@ app.post('/api/immersal/localize', async (req, res) => {
     const r = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, mapIds, b64, fx, fy, ox, oy, param1: 0, param2: 12, param3: 1.0, param4: 2.0 }),
+      body: JSON.stringify({
+        token, mapIds, b64, fx, fy, ox, oy,
+        // 기기 자세 prior (있을 때만). 공식 구현이 /localize 에 함께 보내는 값들이다.
+        ...(solverType != null ? { qx, qy, qz, qw, solverType } : {}),
+        param1: 0, param2: 12, param3: 1.0, param4: 2.0,
+      }),
     });
     const json = await r.json();
     console.log(`[immersal] ${r.status} ${Date.now() - started}ms → ${JSON.stringify(json).slice(0, 200)}`);

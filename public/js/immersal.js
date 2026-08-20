@@ -19,7 +19,14 @@
 
   /**
    * 포즈 규약 후보.
-   * 문서상 Immersal 응답은 "오른손 좌표계, ARKit 중력 정렬"의 camera-to-map 포즈다.
+   *
+   * 정답은 2번이다. Immersal 공식 WebAR 구현(immersal/vps-for-web)이
+   *   axisRot.rotateX(Math.PI);      // X축 180° = diag(1,-1,-1)
+   *   Q.multiply(axisRot);           // 응답 회전에 후곱
+   * 를 하고, 회전행렬은 [[r00,r01,r02],[r10,...]] 로 행 우선 해석한다.
+   * 즉 transpose 없이 post = diag(1,-1,-1) — 아래 2번과 같다.
+   *
+   * 나머지 후보는 현장에서 뭔가 어긋날 때 비교용으로만 남겨 둔다.
    *   T_map_cam = pre · [R(또는 Rᵀ) | t] · post   (invert 면 최종 역행렬)
    */
   const CONVENTIONS = [
@@ -76,10 +83,17 @@
       // 초점거리 보정.
       // reality.intrinsics 는 화면에 맞춰 잘린 렌더 투영이라 그대로 쓰면 과대평가된다.
       // 측정된 스케일 비율이 곧 초점거리 오차 배수이므로 그것으로 자가 보정한다.
-      this.focalCalib = 1;
+      // 초점거리는 "계산해서 넣는 값" 이 아니라 조회하거나 추정하는 값이다.
+      // 공식 구현은 기기 DB(/devget, Pro 플랜 필요)를 쓰고, 없으면 측위를 누적하며
+      // 추정한다. 우리는 무료 플랜이라 DB 를 못 쓰므로 화각 가정으로 시작해
+      // 스케일 비율로 보정하고, 수렴한 값을 기기별로 저장해 다음 세션에 재사용한다.
+      this.focalPx = null;
+      this.focalSource = '미정';
+      this.initialFovDeg = 64;
       this.autoCalibrate = true;
       this.calibrations = 0;
       this.lastFocal = null;
+      this.sendOrientationPrior = false;
 
       this._captureWaiters = [];
       this._pendingFrame = null;
@@ -184,25 +198,35 @@
       return out;
     }
 
+    _focalKey(cols, rows) { return `immersal.focal.${cols}x${rows}`; }
+
     /**
      * 캡처 해상도 기준 fx/fy/ox/oy.
      *
-     * reality.intrinsics 는 엔진의 GraphicsCamera 투영행렬로, 화면 종횡비에 맞춰
-     * 한 축이 잘린 상태다. 반면 CameraPixelArray 는 잘리지 않은 전체 프레임을 준다.
-     * 카메라 픽셀은 정사각형이라 fx = fy 여야 하고, 크롭은 한 축의 화각만 좁히므로
-     * 두 축에서 뽑은 값 중 "작은 쪽" 이 잘리지 않은 축의 참값이다.
+     * ⚠ reality.intrinsics(엔진의 GraphicsCamera 투영행렬)는 쓰지 않는다.
+     *   그건 화면 종횡비에 맞춰 한 축이 잘린 렌더용이라, 잘리지 않은 전체 프레임을
+     *   주는 CameraPixelArray 에 적용하면 초점거리가 크롭 배수만큼 과대평가된다.
+     *   공식 구현도 이 값을 쓰지 않고 기기 DB 또는 추정에 의존한다.
+     *
+     * 픽셀은 정사각형이므로 fx = fy, 주점은 이미지 중심으로 둔다.
      */
     _intrinsics(cols, rows) {
-      const m = this.reality && this.reality.intrinsics;
-      if (!m || m.length < 10 || !m[0]) {
-        const f = cols / (2 * Math.tan((60 * Math.PI / 180) / 2));   // 화각 60° 가정
-        return {fx: f, fy: f, ox: cols / 2, oy: rows / 2, estimated: true};
+      if (this.focalPx == null) {
+        const saved = Number(localStorage.getItem(this._focalKey(cols, rows)));
+        if (saved > 0) {
+          this.focalPx = saved;
+          this.focalSource = '저장값';
+          Log.info(`[immersal] 저장된 초점거리 ${saved.toFixed(0)}px 재사용 (${cols}x${rows})`);
+        } else {
+          // 폰 후면 카메라 통상 화각으로 시작. 이후 스케일 비율로 보정된다.
+          const longSide = Math.max(cols, rows);
+          this.focalPx = longSide / (2 * Math.tan((this.initialFovDeg * Math.PI / 180) / 2));
+          this.focalSource = `화각 ${this.initialFovDeg}° 가정`;
+          Log.info(`[immersal] 초점거리 초기값 ${this.focalPx.toFixed(0)}px (${this.focalSource})`);
+        }
       }
-      const fxD = Math.abs((m[0] * cols) / 2);
-      const fyD = Math.abs((m[5] * rows) / 2);
-      const f = Math.min(fxD, fyD) * this.focalCalib;
-      this.lastFocal = {f, fxD, fyD, calib: this.focalCalib};
-      return {fx: f, fy: f, ox: cols / 2, oy: rows / 2, estimated: false};
+      this.lastFocal = {f: this.focalPx, source: this.focalSource};
+      return {fx: this.focalPx, fy: this.focalPx, ox: cols / 2, oy: rows / 2, estimated: false};
     }
 
     async localizeOnce() {
@@ -218,14 +242,28 @@
         if (!snap) { Log.warn('[immersal] 카메라 프레임을 못 받음'); this.onStatus('fail'); return false; }
 
         const {gray, cols, rows, cam} = snap;
+        this._lastDims = {cols, rows};
         const b64 = await window.PNGEncoder.encodeGray8(gray, cols, rows);
-        const {fx, fy, ox, oy, estimated} = this._intrinsics(cols, rows);
-        if (estimated) Log.warn('[immersal] intrinsics 추정값 사용 중 (정확도 저하 가능)');
+        const {fx, fy, ox, oy} = this._intrinsics(cols, rows);
+
+        const body = {b64, fx, fy, ox, oy};
+
+        // 기기 자세 prior. 공식 구현은 gyro·axisRot 로 만든 쿼터니언과 solverType 을 함께 보낸다.
+        // 우리 카메라 회전은 "트래킹 프레임" 기준이라 맵 프레임과 yaw 원점이 다르다.
+        // 정렬이 한 번 끝난 뒤에는 루트 변환으로 맵 프레임으로 바꿀 수 있으므로 그때만 보낸다.
+        if (this.sendOrientationPrior && this.applied) {
+          const camQ = new THREE.Quaternion().setFromRotationMatrix(cam);
+          const rootQ = new THREE.Quaternion();
+          this.rootEl.object3D.getWorldQuaternion(rootQ);
+          const q = rootQ.invert().multiply(camQ)            // 트래킹 → 맵 프레임
+            .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI));
+          Object.assign(body, {qx: q.x, qy: q.y, qz: q.z, qw: q.w, solverType: 1});
+        }
 
         const res = await fetch('/api/immersal/localize', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({b64, fx, fy, ox, oy}),
+          body: JSON.stringify(body),
         });
         const json = await res.json();
         const ms = Math.round(performance.now() - t0);
@@ -240,7 +278,7 @@
 
         this.successes++;
         this._addSample(json, cam);
-        Log.info(`[immersal] 성공 #${this.successes} conf=${json.confidence ?? '-'} f=${fx.toFixed(0)} (${cols}x${rows}, ${ms}ms)`);
+        Log.info(`[immersal] 성공 #${this.successes} conf=${json.confidence ?? '-'} f=${fx.toFixed(0)}px(${this.focalSource}) ${cols}x${rows} ${ms}ms`);
 
         if (this.autoConvention) this._pickConvention();
         this._applyLatest();
@@ -450,28 +488,49 @@
      * 자가 보정 — 측정된 스케일 비율이 곧 초점거리 오차 배수다.
      * 흩어짐이 작을 때(= 계통 오차일 때)만 적용하고, 적용 후 샘플을 비운다.
      */
+    /**
+     * 초점거리 자가 보정.
+     * 측정된 스케일 비율이 곧 초점거리 오차 배수다. 흩어짐이 작을 때(계통 오차)만 적용한다.
+     * 수렴한 값은 기기·해상도별로 저장해 다음 세션에서 바로 쓴다.
+     */
     _maybeCalibrate() {
       if (!this.autoCalibrate) return;
       const d = this.diagnostics;
       if (!d || !d.ready || !d.systematic) return;
-      if (d.pairs < 2 || this.calibrations >= 4) return;
-      if (Math.abs(d.scaleRatio - 1) < 0.08) return;
+      if (d.pairs < 2 || this.calibrations >= 6) return;
+      if (Math.abs(d.scaleRatio - 1) < 0.05) return;
 
-      const next = this.focalCalib / d.scaleRatio;
-      if (!(next > 0.3 && next < 3)) {
-        Log.warn(`[보정] 계수 ${next.toFixed(3)} 가 범위를 벗어나 적용하지 않음`);
+      const next = this.focalPx / d.scaleRatio;
+      if (!(next > 100 && next < 5000)) {
+        Log.warn(`[보정] 초점거리 ${next.toFixed(0)}px 가 범위를 벗어나 적용하지 않음`);
         return;
       }
 
       this.calibrations++;
-      Log.info(`[보정] 스케일 ${d.scaleRatio.toFixed(3)} (편차 ${(d.spread * 100).toFixed(0)}%) → 초점거리 계수 ${this.focalCalib.toFixed(3)} → ${next.toFixed(3)} (${this.calibrations}회)`);
-      this.focalCalib = next;
+      Log.info(`[보정] 스케일 ${d.scaleRatio.toFixed(3)} (편차 ${(d.spread * 100).toFixed(0)}%) → 초점거리 ${this.focalPx.toFixed(0)} → ${next.toFixed(0)}px (${this.calibrations}회)`);
+      this.focalPx = next;
+      this.focalSource = `보정 ${this.calibrations}회`;
+      if (this._lastDims) {
+        try { localStorage.setItem(this._focalKey(this._lastDims.cols, this._lastDims.rows), String(next)); } catch (e) {}
+      }
 
       // 이전 샘플은 옛 초점거리로 계산된 값이라 섞으면 안 된다.
       this.samples = [];
       this.applied = false;
       this.diagnostics = {ready: false, samples: 0, focal: this.lastFocal, calibrations: this.calibrations};
       this.onDiagnostics(this.diagnostics);
+    }
+
+    /** 저장된 보정값을 지우고 처음부터 다시 추정한다. */
+    resetFocal() {
+      if (this._lastDims) {
+        try { localStorage.removeItem(this._focalKey(this._lastDims.cols, this._lastDims.rows)); } catch (e) {}
+      }
+      this.focalPx = null;
+      this.calibrations = 0;
+      this.samples = [];
+      this.applied = false;
+      Log.info('[보정] 초점거리 초기화 — 다시 추정합니다');
     }
 
     startAuto({intervalMs, maxAttempts, continuous}) {
