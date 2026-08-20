@@ -384,6 +384,9 @@ AFRAME.registerComponent('dora-experience', {
     const d = L && L.diagnostics;
     const lines = [
       `map=${this.localizedMapId || '-'} 측위=${L ? `${L.successes}/${L.attempts}` : '-'}`,
+      L && Object.keys(L.mapStats).length
+        ? `맵별성공=${Object.entries(L.mapStats).map(([m, n]) => `${m}:${n}`).join(' ')}`
+        : '',
       `f=${L && L.focalPx ? L.focalPx.toFixed(0) : '-'}px(${L ? L.focalSource : '-'}) 보정=${L ? L.calibrations : 0}회`,
       `규약=${L ? L.conventionName() : '-'} 중력잠금=${L && L.gravityLock ? 'on' : 'off'}`,
       d && d.ready

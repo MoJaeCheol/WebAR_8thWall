@@ -97,6 +97,12 @@
 
       this._captureWaiters = [];
       this._pendingFrame = null;
+
+      // 여러 맵을 동시에 켜두면(IMMERSAL_MAP_IDS 에 쉼표로 나열) Immersal 이 둘 다
+      // 시도하고 응답의 map 필드로 어느 쪽이 매칭됐는지 알려준다.
+      // ⚠ 맵마다 좌표계가 다르므로 샘플을 섞으면 안 된다. 매칭된 맵이 바뀌면 정렬을 새로 잡는다.
+      this.activeMapId = null;
+      this.mapStats = {};           // {mapId: 성공 횟수}
     }
 
     setConvention(i) {
@@ -299,6 +305,19 @@
     }
 
     _addSample(r, camMatrix) {
+      const mapId = r.map;
+      this.mapStats[mapId] = (this.mapStats[mapId] || 0) + 1;
+
+      if (this.activeMapId == null) {
+        this.activeMapId = mapId;
+      } else if (mapId !== this.activeMapId) {
+        // 다른 맵이 매칭됐다. 좌표계가 다르므로 이전 샘플·정렬을 버리고 새로 시작한다.
+        Log.warn(`[immersal] 매칭된 맵이 ${this.activeMapId} → ${mapId} 로 바뀜. 정렬을 새로 잡습니다`);
+        this.activeMapId = mapId;
+        this.samples = [];
+        this.applied = false;
+      }
+
       this.samples.push({
         r,
         cam: camMatrix,
@@ -472,6 +491,8 @@
         rejected: this.rejected,
         focal: this.lastFocal,
         calibrations: this.calibrations,
+        activeMapId: this.activeMapId,
+        mapStats: {...this.mapStats},
         baseline: Math.max(...pairs.map((p) => p.dSlam)),
       };
       // 편차(비율)에 기준선을 곱하면 측위 위치 오차의 대략적인 크기(m)가 된다.
