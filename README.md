@@ -1,5 +1,8 @@
 # 어디로든 문 AR — 8th Wall + Immersal (로컬 WebAR)
 
+> 📋 **작업을 이어받는다면 [HANDOFF.md](HANDOFF.md) 를 먼저 읽을 것.**
+> 현재 상태, 확정된 사실, 남은 문제, 다음 계획(자체 VPS)이 정리되어 있다.
+
 로컬 서버에서 바로 도는 WebAR 프로토타입.
 8th Wall 엔진으로 SLAM(월드 트래킹), Immersal VPS 로 실제 공간 정렬을 담당한다.
 
