@@ -198,6 +198,38 @@ IMMERSAL_MAP_IDS=150527,160999
 새 맵을 만들면 **맵 ID 가 바뀌므로 Render 의 `IMMERSAL_MAP_IDS` 를 반드시 갱신**해야 한다.
 저장된 문 위치(앵커)도 맵 ID 별로 보관되므로 새 맵에서는 다시 지정해야 한다.
 
+### absolute 스케일에는 코칭 오버레이가 필수다
+
+`scale: absolute` 는 속성만 준다고 잡히지 않는다. 엔진이 실제 크기를 알아내려면
+**초기화 때 기기를 앞뒤로 움직여 시차를 만들어야** 한다. 사용자가 그 동작을 하지 않으면
+스케일이 엉뚱하게 잡히고, 콘텐츠가 크게 보이며 걸어도 잘 따라오는 것처럼 보인다.
+
+8th Wall 이 그 동작을 유도하는 오버레이를 따로 배포한다
+(`@8thwall/coaching-overlay` — "Helpful user prompts for **Absolute Scale**").
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/@8thwall/coaching-overlay@1/dist/coaching-overlay.js"></script>
+```
+```html
+<a-scene coaching-overlay="promptText: 크기를 인식하는 중이에요. 폰을 앞뒤로 천천히 움직여 주세요">
+```
+
+### 맵→씬 변환은 닮음변환이다
+
+씬이 미터가 아닐 수 있으므로 회전·평행이동만으로는 맞출 수 없다. 배율까지 포함해야 한다.
+
+```
+scene = k · R · map + t,     t = camScene − k · R · camMap
+```
+
+`k`(맵 1m 가 씬에서 몇 단위인가)는 맵이 미터로 만들어지므로
+**측정된 스케일 비율의 역수**다. 흩어짐이 작을 때만 갱신하고 콘텐츠 루트의 scale 로 적용한다.
+이렇게 하면 **배치와 크기가 동시에** 맞는다.
+
+> ⚠ 씬 배율 오차와 초점거리 오차는 둘 다 같은 비율에 곱해져 들어와 한 측정으로 분리되지 않는다.
+> 둘을 동시에 자동 보정하면 서로 상쇄하며 발산한다. 씬 배율 쪽이 물리적으로 더 앞단이므로
+> `autoSceneScale: true`, `autoCalibrate: false` 가 기본이다.
+
 ### 씬이 미터 단위인지 직접 재기 (1m 기준자)
 
 정렬이 어긋날 때 원인이 **씬 스케일**인지 **측위**인지 헷갈린다. 기준자는 그걸 가른다.

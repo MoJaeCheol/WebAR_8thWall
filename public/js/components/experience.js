@@ -77,6 +77,9 @@ AFRAME.registerComponent('dora-experience', {
     });
     $('#devReport').addEventListener('click', () => this.copyReport());
     $('#devRuler').addEventListener('click', () => this.toggleRuler());
+    $('#devScaleDown').addEventListener('click', () => this.nudgeSceneScale(1 / 1.1));
+    $('#devScaleUp').addEventListener('click', () => this.nudgeSceneScale(1.1));
+    $('#devScaleReset').addEventListener('click', () => this.nudgeSceneScale(null));
     $('#devAutoCal').addEventListener('click', () => {
       if (!this.localizer) return;
       const on = !this.localizer.autoCalibrate;
@@ -184,7 +187,8 @@ AFRAME.registerComponent('dora-experience', {
     this.localizer.gravityLock = cfg.gravityLock !== false;
     if (cfg.smoothing !== undefined) this.localizer.smoothing = cfg.smoothing;
     if (cfg.outlierMeters !== undefined) this.localizer.outlierMeters = cfg.outlierMeters;
-    this.localizer.autoCalibrate = cfg.autoCalibrate !== false;
+    this.localizer.autoCalibrate = cfg.autoCalibrate === true;
+    this.localizer.autoSceneScale = cfg.autoSceneScale !== false;
     this.localizer.attachPipeline(cfg.maxDimension);
 
     const ready = await this.localizer.checkServer();
@@ -388,6 +392,22 @@ AFRAME.registerComponent('dora-experience', {
   },
 
   /**
+   * 씬 배율을 손으로 조정한다.
+   * 기준자 상자가 실제 1m 로 보일 때까지 맞추면, 그 값이 곧 "맵 1m = 씬 몇 단위" 다.
+   * 측위 없이도 조정할 수 있어 VPS 와 독립적으로 스케일을 잡을 수 있다.
+   */
+  nudgeSceneScale(factor) {
+    const L = this.localizer;
+    if (!L) { this.setHint('VPS 초기화 후에 조정할 수 있어'); return; }
+    L.autoSceneScale = false;   // 손으로 만진 순간부터 자동 추정을 멈춘다
+    L.sceneScale = factor == null ? 1 : L.sceneScale * factor;
+    L.applied = false;          // 새 배율로 정렬을 다시 잡는다
+    if (this.ruler) { this.toggleRuler(); this.toggleRuler(); }   // 기준자 다시 그리기
+    this.setHint(`씬 배율 ${L.sceneScale.toFixed(3)} — 상자가 실제 1m 로 보일 때까지 맞춰줘`);
+    Log.info(`[씬배율] 수동 조정 → ${L.sceneScale.toFixed(3)} (자동 추정 중단)`);
+  },
+
+  /**
    * 씬이 미터 단위인지 직접 확인하는 기준자.
    *
    * VPS·맵과 무관하게 8th Wall 씬 스케일만 잰다. 카메라 정면 2m 바닥에
@@ -416,8 +436,13 @@ AFRAME.registerComponent('dora-experience', {
     dir.normalize();
     const at = camWorld.clone().addScaledVector(dir, 2);
 
+    // 현재 씬 배율 기준으로 "실제 1m" 에 해당하는 크기로 그린다.
+    // 배율이 맞으면 상자가 진짜 1m 로 보인다.
+    const u = this.localizer ? this.localizer.sceneScale : 1;
+
     const g = document.createElement('a-entity');
     g.setAttribute('position', {x: at.x, y: 0, z: at.z});
+    g.setAttribute('scale', `${u} ${u} ${u}`);
 
     const box = document.createElement('a-box');
     box.setAttribute('width', 1); box.setAttribute('height', 1); box.setAttribute('depth', 1);
@@ -463,7 +488,7 @@ AFRAME.registerComponent('dora-experience', {
         ? `맵별성공=${Object.entries(L.mapStats).map(([m, n]) => `${m}:${n}`).join(' ')}`
         : '',
       `f=${L && L.focalPx ? L.focalPx.toFixed(0) : '-'}px(${L ? L.focalSource : '-'}) 보정=${L ? L.calibrations : 0}회`,
-      `규약=${L ? L.conventionName() : '-'} 중력잠금=${L && L.gravityLock ? 'on' : 'off'}`,
+      `규약=${L ? L.conventionName() : '-'} 씬배율=${L ? L.sceneScale.toFixed(3) : '-'}${L && !L.autoSceneScale ? '(수동)' : ''}`,
       d && d.ready
         ? `스케일=${d.scaleRatio.toFixed(3)} 편차=${(d.spread * 100).toFixed(0)}% 측위오차≈±${d.estError.toFixed(2)}m`
         : `스케일=미측정(표본 ${d ? d.samples : 0}, 1.2m 이상 이동 필요)`,
@@ -503,6 +528,11 @@ AFRAME.registerComponent('dora-experience', {
     }
 
     if (this.localizer) {
+      const ss = document.querySelector('#devSceneScale');
+      if (ss) {
+        ss.textContent = `${this.localizer.sceneScale.toFixed(3)}`
+          + (this.localizer.autoSceneScale ? '' : ' (수동)');
+      }
       const s = document.querySelector('#devLocStat');
       if (s) s.textContent = `${this.localizer.successes} / ${this.localizer.attempts}`;
       const c = document.querySelector('#devConv');

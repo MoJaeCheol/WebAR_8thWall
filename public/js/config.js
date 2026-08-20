@@ -23,7 +23,11 @@ window.AR_CONFIG = {
     // 초점거리 자가 보정. reality.intrinsics 는 화면에 맞춰 잘린 렌더 투영이라
     // 그대로 쓰면 과대평가된다. 측정된 스케일 비율이 곧 오차 배수이므로
     // 흩어짐이 작을 때(계통 오차일 때)만 그 값으로 보정한다.
-    autoCalibrate: true,
+    // ⚠ 씬 배율 오차와 초점거리 오차는 둘 다 스케일 비율에 곱해져 들어와
+    //    한 측정으로 분리되지 않는다. 씬 배율 보정(autoSceneScale)이 우선이므로
+    //    초점거리 자동보정은 기본으로 꺼 둔다. 둘을 동시에 켜면 서로 상쇄하며 발산한다.
+    autoCalibrate: false,
+    autoSceneScale: true,
     maxDimension: 640,      // 서버로 보낼 캡처 이미지 최대 변 길이 (클수록 정확/느림)
 
     // 포즈 규약. Immersal 공식 WebAR 구현(immersal/vps-for-web)이 응답 회전에

@@ -103,6 +103,13 @@
       // ⚠ 맵마다 좌표계가 다르므로 샘플을 섞으면 안 된다. 매칭된 맵이 바뀌면 정렬을 새로 잡는다.
       this.activeMapId = null;
       this.mapStats = {};           // {mapId: 성공 횟수}
+
+      // 맵 좌표(미터) → 씬 단위 배율.
+      // 8th Wall 의 scale:absolute 가 기대대로 동작하지 않으면 씬은 미터가 아니다.
+      // 맵은 미터로 만들어지므로 측정된 비율의 역수가 곧 이 배율이고,
+      // 이걸 콘텐츠 루트의 scale 로 적용하면 배치와 크기가 동시에 맞는다.
+      this.sceneScale = 1;
+      this.autoSceneScale = true;
     }
 
     setConvention(i) {
@@ -407,6 +414,18 @@
       this.conventionIndex = best.i;
     }
 
+    /**
+     * 정렬 적용.
+     *
+     * 맵→씬 변환은 회전·평행이동만이 아니라 **배율까지 포함한 닮음변환**이다.
+     * 씬이 미터 단위가 아니면(8th Wall scale 설정이 기대대로 안 먹는 경우)
+     * 배율 없이 맞추려 해봐야 위치도 크기도 어긋난다.
+     *
+     *   scene = k · R · map + t,     t = camScene − k · R · camMap
+     *
+     * 카메라 대응(카메라가 맵 좌표 (px,py,pz) 에 있다)을 유지하도록 t 를 풀기 때문에
+     * 회전을 중력으로 평탄화해도 어긋나지 않는다.
+     */
     _applyLatest() {
       const last = this.samples[this.samples.length - 1];
       if (!last) return;
@@ -419,13 +438,14 @@
 
       const tilt = UP.clone().applyQuaternion(quat).angleTo(UP) * 180 / Math.PI;
       if (this.gravityLock) {
-        // 회전을 평탄화했으면 평행이동도 다시 풀어야 한다. 안 그러면 맵 원점을 축으로
-        // 전체가 휘둘려, 원점에서 먼 콘텐츠일수록 밀린다.
+        // 두 좌표계 모두 중력 정렬이므로 pitch/roll 은 측위 오차다.
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
         quat.setFromEuler(new THREE.Euler(0, Math.atan2(-fwd.x, -fwd.z), 0));
-        const camWorld = new THREE.Vector3().setFromMatrixPosition(last.cam);
-        pos.copy(camWorld).sub(last.mapPos.clone().applyQuaternion(quat));
       }
+
+      const k = this.sceneScale;
+      const camWorld = new THREE.Vector3().setFromMatrixPosition(last.cam);
+      pos.copy(camWorld).sub(last.mapPos.clone().applyQuaternion(quat).multiplyScalar(k));
 
       const o = this.rootEl.object3D;
       const f = (n) => n.toFixed(2);
@@ -433,10 +453,10 @@
       if (!this.applied) {
         o.position.copy(pos);
         o.quaternion.copy(quat);
-        o.scale.set(1, 1, 1);
+        o.scale.setScalar(k);
         this.applied = true;
         this.lastShift = 0;
-        Log.info(`[immersal] ${this.conventionName()} → 최초 정렬 (${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)}) 기울기 ${tilt.toFixed(0)}°`);
+        Log.info(`[immersal] ${this.conventionName()} → 최초 정렬 (${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)}) 배율 ${k.toFixed(3)} 기울기 ${tilt.toFixed(0)}°`);
       } else {
         const shift = pos.distanceTo(o.position);
         this.lastShift = shift;
@@ -447,6 +467,7 @@
         }
         o.position.lerp(pos, this.smoothing);
         o.quaternion.slerp(quat, this.smoothing);
+        o.scale.lerp(new THREE.Vector3(k, k, k), this.smoothing);
       }
       o.updateMatrixWorld(true);
     }
@@ -500,6 +521,18 @@
       this.diagnostics.estError = spread * this.diagnostics.baseline;
 
       const d = this.diagnostics;
+
+      // 씬 배율 추정. 맵은 미터이므로 (SLAM 이동거리 / 맵 이동거리) 가 곧 배율이다.
+      // 흩어짐이 작을 때만(계통 오차일 때만) 갱신한다.
+      if (this.autoSceneScale && d.systematic && d.pairs >= 2) {
+        const k = 1 / d.scaleRatio;
+        if (k > 0.2 && k < 5 && Math.abs(k - this.sceneScale) / this.sceneScale > 0.03) {
+          Log.info(`[씬배율] ${this.sceneScale.toFixed(3)} → ${k.toFixed(3)} (맵 1m = 씬 ${k.toFixed(2)}단위)`);
+          this.sceneScale = k;
+          this.applied = false;   // 배율이 바뀌었으니 정렬을 다시 잡는다
+        }
+      }
+      d.sceneScale = this.sceneScale;
       d.ok = Math.abs(d.scaleRatio - 1) < 0.1 && d.agreePos < 0.4 && d.agreeDeg < 6;
       Log.info(`[진단] 쌍 ${d.pairs}개 · 스케일 ${d.scaleRatio.toFixed(3)} (편차 ${(spread * 100).toFixed(0)}%) · 일치 ${d.agreePos.toFixed(2)}m/${d.agreeDeg.toFixed(1)}°`);
       this.onDiagnostics(d);

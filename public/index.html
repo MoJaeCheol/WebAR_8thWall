@@ -10,6 +10,9 @@
   <script crossorigin="anonymous" src="./external/scripts/8frame-1.5.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@8thwall/landing-page@1/dist/landing-page.js" crossorigin="anonymous"></script>
+  <!-- absolute 스케일은 초기화 때 "폰을 앞뒤로" 동작으로 시차를 만들어야 실제 크기를 잡는다.
+       이 오버레이가 그 동작을 유도한다. 없으면 스케일이 엉뚱하게 잡힌다. -->
+  <script src="https://cdn.jsdelivr.net/npm/@8thwall/coaching-overlay@1/dist/coaching-overlay.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" crossorigin="anonymous" async data-preload-chunks="slam"></script>
 
   <!-- 프로젝트 코드 (a-scene 파싱 전에 컴포넌트 등록이 끝나야 한다) -->
@@ -60,6 +63,7 @@
       <div class="kv"><span>두 지점 일치</span><b id="devAgree">–</b></div>
       <div class="kv"><span>정렬 흔들림</span><b id="devShift">–</b></div>
       <div class="kv"><span>초점거리 f</span><b id="devFocal">–</b></div>
+      <div class="kv"><span>씬 배율 (맵1m→씬)</span><b id="devSceneScale">1.000</b></div>
       <p class="verdict" id="devVerdict">측위를 기다리는 중…</p>
       <button class="wide" id="devTogglePoints">맵 특징점 겹쳐 보기</button>
       <button class="wide" id="devReport">진단 리포트 복사</button>
@@ -85,6 +89,9 @@
       <div class="kv"><span>규약</span><b id="devConv">–</b></div>
       <div class="btns">
         <button id="devRuler">1m 기준자</button>
+        <button id="devScaleDown">배율 −10%</button>
+        <button id="devScaleUp">배율 +10%</button>
+        <button id="devScaleReset">배율 1.0</button>
         <button id="devAutoCal" class="active">자동보정 켬</button>
         <button id="devCycleConv">규약 수동 변경</button>
         <button id="devResetFocal">초점거리 초기화</button>
@@ -114,6 +121,8 @@
 <a-scene
   dora-experience
   landing-page
+  coaching-overlay="animationColor: #ffd900; promptColor: #ffffff;
+                    promptText: 크기를 인식하는 중이에요. 폰을 앞뒤로 천천히 움직여 주세요"
   xrextras-loading
   xrextras-runtime-error
   renderer="colorManagement: true"
