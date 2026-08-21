@@ -42,6 +42,20 @@ class Localizer:
     def __init__(self, provider=None):
         self.provider = provider or SiftProvider()
         self.maps: dict[int, LoadedMap] = {}
+        # 원격 진단용 누적 통계 — 실패 질의도 "어디까지 갔는지"(특징/매치/인라이어) 남긴다
+        self.stats = {"queries": 0, "ok": 0, "fail": {}}
+        self.recent: list[dict] = []
+
+    def _record(self, entry: dict) -> None:
+        self.stats["queries"] += 1
+        if entry.get("success"):
+            self.stats["ok"] += 1
+        else:
+            e = entry.get("error", "?")
+            self.stats["fail"][e] = self.stats["fail"].get(e, 0) + 1
+        self.recent.append(entry)
+        if len(self.recent) > 50:
+            self.recent.pop(0)
 
     def load_registry(self, maps_dir: str | Path) -> list[int]:
         maps_dir = Path(maps_dir)
@@ -102,13 +116,17 @@ class Localizer:
 
         kp, desc = self.provider.extract(gray)
         if len(kp) < MIN_INLIERS:
-            return {"success": False, "error": "not-enough-features",
-                    "features": int(len(kp)), "timeMs": round((time.time() - t0) * 1000)}
+            r = {"success": False, "error": "not-enough-features",
+                 "features": int(len(kp)), "timeMs": round((time.time() - t0) * 1000)}
+            self._record({**r, "t": round(time.time())})
+            return r
 
         K = geometry.K_matrix(fx, fy, ox, oy)
         best = None
+        near = {"matches": 0, "inliers": 0}   # 게이트에 걸린 최선의 시도 (진단용)
         for lm in targets:
             qidx, obj = self._match_map(lm, desc)
+            near["matches"] = max(near["matches"], len(obj))
             if len(obj) < MIN_INLIERS:
                 continue
             img_pts = kp[qidx].astype(np.float64)
@@ -119,6 +137,7 @@ class Localizer:
             if not ok or inl is None:
                 continue
             inl = inl.ravel()
+            near["inliers"] = max(near["inliers"], len(inl))
             if len(inl) < MIN_INLIERS or len(inl) / len(obj) < MIN_INLIER_RATIO:
                 continue
             rvec, tvec = cv2.solvePnPRefineLM(obj[inl], img_pts[inl], K, None, rvec, tvec)
@@ -128,7 +147,11 @@ class Localizer:
 
         ms = round((time.time() - t0) * 1000)
         if best is None:
-            return {"success": False, "error": "not-enough-inliers", "timeMs": ms}
+            r = {"success": False, "error": "not-enough-inliers", "timeMs": ms,
+                 "features": int(len(kp)),
+                 "nearMatches": near["matches"], "nearInliers": near["inliers"]}
+            self._record({**r, "t": round(time.time())})
+            return r
 
         R_cv, _ = cv2.Rodrigues(best["rvec"])
         R_wc, c = geometry.cv_extrinsics_to_gl_pose(R_cv, best["tvec"].ravel())
@@ -137,4 +160,9 @@ class Localizer:
                 "inliers": int(best["inliers"]), "matches": int(best["matches"]),
                 "timeMs": ms}
         resp.update(geometry.gl_pose_to_response(R_wc, c))
+        self._record({"success": True, "map": best["map"], "features": int(len(kp)),
+                      "matches": int(best["matches"]), "inliers": int(best["inliers"]),
+                      "px": round(float(c[0]), 2), "py": round(float(c[1]), 2),
+                      "pz": round(float(c[2]), 2),
+                      "timeMs": ms, "t": round(time.time())})
         return resp

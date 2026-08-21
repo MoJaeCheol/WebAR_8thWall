@@ -164,6 +164,16 @@ app.post('/api/vps/localize', async (req, res) => {
   }
 });
 
+/** 측위 통계 중계 — 원격 진단용 (실패 질의의 근접도 포함). */
+app.get('/api/vps/stats', async (req, res) => {
+  try {
+    const r = await fetch(`${VPS_URL}/stats`, { signal: AbortSignal.timeout(3000) });
+    res.status(r.status).json(await r.json());
+  } catch (e) {
+    res.status(502).json({ error: 'vps-unreachable', message: e.message });
+  }
+});
+
 /** 자체 맵 포인트클라우드 중계 (PLY — 기존 AR 오버레이 디버그 뷰가 그대로 쓴다). */
 app.get('/api/vps/map/:mapId/pointcloud', async (req, res) => {
   const key = `vps:${req.params.mapId}`;

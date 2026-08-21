@@ -63,6 +63,12 @@ def health():
     return {"ok": True, "maps": sorted(localizer.maps)}
 
 
+@app.get("/stats")
+def stats():
+    """원격 진단 — 실패 질의의 근접도(nearInliers 등)까지 포함한 누적 통계."""
+    return {"stats": localizer.stats, "recent": localizer.recent[-25:]}
+
+
 @app.get("/maps")
 def maps():
     return {str(k): {"name": v.name, "points": v.data.num_points}
