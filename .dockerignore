@@ -1,0 +1,10 @@
+node_modules
+.venv
+certs
+.env
+data/datasets
+capture-ios
+.git
+*.zip
+__pycache__
+.pytest_cache

@@ -1,0 +1,6 @@
+# 측위 서버 런타임 전용 (배포용 — 빌더/테스트 의존성 제외).
+# opencv 는 headless — 서버에는 GUI 라이브러리(libGL)가 없다.
+numpy>=1.26
+opencv-python-headless>=4.10
+fastapi>=0.111
+uvicorn>=0.30

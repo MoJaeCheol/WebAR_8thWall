@@ -309,11 +309,17 @@ npm start          # HTTP :3000 (PC), HTTPS :3443 (폰, LAN IP 안내 출력)
 (최초 1회: `python -m venv .venv` 후 `.venv\Scripts\pip install -r vps\requirements.txt`)
 Node 가 10초마다 :8000 헬스를 프로브해 `/api/config` 의 `vps.configured` 로 알려준다.
 
-Render 환경변수:
+Render 배포는 **Docker 런타임**(Dockerfile + start.sh)으로 바뀌었다 (2026-08-21) —
+한 컨테이너에서 uvicorn(:8000, 자체 VPS)과 Node($PORT)를 함께 돌린다.
+맵은 `data/maps/` 에 커밋된 것이 이미지에 포함된다 (새 맵 = 커밋 후 자동 재배포).
+⚠ 기존 node 런타임 서비스는 런타임 전환이 안 되므로 지우고 Blueprint 로 재생성.
+⚠ 무료 플랜은 0.1 CPU — SIFT 측위가 로컬 ~150ms 대신 **2~6초**로 느려진다.
+   검증엔 충분하고, 전시 수준 속도는 Starter($7/월) 또는 현장 PC 로.
+
+Render 환경변수 (자체 VPS 만 쓰면 둘 다 생략 가능):
 ```
 IMMERSAL_TOKEN     = (개발자 포털에서 복사)
 IMMERSAL_MAP_IDS   = 150559          # 쉼표로 최대 8개
-NODE_ENV           = production
 ```
 
 > ⚠ 토큰이 이전 세션 대화에 평문으로 남아 있다. 개발 끝나면 포털에서 재발급 권장.

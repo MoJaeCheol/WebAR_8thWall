@@ -1,18 +1,18 @@
 # Render Blueprint — https://render.com/docs/blueprint-spec
+# Docker 런타임: Node 웹서버 + Python 측위 서버(자체 VPS)를 한 컨테이너로 돌린다.
+# ⚠ 기존 서비스가 node 런타임으로 만들어져 있었다면 런타임 전환이 안 되므로
+#   대시보드에서 서비스를 지우고 New → Blueprint 로 다시 만들 것 (env 재입력 필요).
 services:
   - type: web
     name: ar-8th-doraemon
-    runtime: node
+    runtime: docker
     plan: free
     region: singapore          # 한국에서 가장 가까운 리전
-    buildCommand: npm ci
-    startCommand: node server.js
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
-      - key: NODE_ENV
-        value: production
       # 아래 두 개는 Render 대시보드에서 직접 입력한다 (sync: false = blueprint 에 값 저장 안 함)
+      # Immersal A/B 비교를 안 쓰면 비워둬도 된다 — 자체 VPS 는 환경변수가 필요 없다.
       - key: IMMERSAL_TOKEN
         sync: false
       - key: IMMERSAL_MAP_IDS

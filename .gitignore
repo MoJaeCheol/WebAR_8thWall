@@ -9,10 +9,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# 캡처 데이터셋·빌드된 맵 (용량 큼 — 필요 시 별도 보관)
+# 캡처 데이터셋 (수백 MB — git 에 안 올림. 맵(data/maps)은 배포에 필요해서 커밋한다)
 data/datasets/
-data/maps/
 
 # Xcode (capture-ios 프로젝트는 Mac 에서 생성)
 capture-ios/*.xcodeproj
 xcuserdata/
+*.zip
