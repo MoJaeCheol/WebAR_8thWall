@@ -116,7 +116,9 @@ const VPS_URL = process.env.VPS_URL || 'http://127.0.0.1:8000';
 let vpsProbe = { at: 0, ok: false, maps: [] };
 
 async function probeVps() {
-  if (Date.now() - vpsProbe.at < 10_000) return vpsProbe;
+  // 성공은 10초 캐시, 실패는 3초만 — 측위 서버가 부팅 중일 때 빨리 복구되도록
+  const ttl = vpsProbe.ok ? 10_000 : 3_000;
+  if (Date.now() - vpsProbe.at < ttl) return vpsProbe;
   try {
     const r = await fetch(`${VPS_URL}/health`, { signal: AbortSignal.timeout(1500) });
     const j = await r.json();

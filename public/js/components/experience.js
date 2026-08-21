@@ -241,7 +241,13 @@ AFRAME.registerComponent('dora-experience', {
     this.localizer.autoSceneScale = cfg.autoSceneScale !== false;
     this.localizer.attachPipeline(cfg.maxDimension);
 
-    const ready = await this.localizer.checkServer();
+    // Render 무료 플랜은 슬립에서 깨는 데 시간이 걸려, 첫 조회가 "미설정" 으로
+    // 나올 수 있다 (측위 서버가 맵을 로드하는 중). 준비될 때까지 재확인한다.
+    let ready = await this.localizer.checkServer();
+    for (let i = 0; !ready && i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 8000));
+      ready = await this.localizer.checkServer();
+    }
     if (ready && cfg.autoLocalize) {
       this.localizer.startAuto({
         intervalMs: cfg.intervalMs,
