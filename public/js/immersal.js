@@ -126,6 +126,8 @@
 
       this._captureWaiters = [];
       this._pendingFrame = null;
+      this._sharpHist = [];         // 최근 전송 프레임들의 선명도 (블러 판정 기준선)
+      this.blurSkipped = 0;
 
       // 여러 맵을 동시에 켜두면(IMMERSAL_MAP_IDS 에 쉼표로 나열) Immersal 이 둘 다
       // 시도하고 응답의 map 필드로 어느 쪽이 매칭됐는지 알려준다.
@@ -297,11 +299,29 @@
       return {fx: this.focalPx, fy: this.focalPx, ox: cols / 2, oy: rows / 2, estimated: false};
     }
 
+    /** 라플라시안 분산 — 값이 낮으면 흐린 프레임. 2픽셀 간격 샘플링이라 ~10ms. */
+    _sharpness(gray, cols, rows) {
+      let sum = 0;
+      let sum2 = 0;
+      let n = 0;
+      for (let y = 1; y < rows - 1; y += 2) {
+        const r = y * cols;
+        for (let x = 1; x < cols - 1; x += 2) {
+          const v = gray[r + x - 1] + gray[r + x + 1] + gray[r - cols + x] + gray[r + cols + x]
+            - 4 * gray[r + x];
+          sum += v;
+          sum2 += v * v;
+          n++;
+        }
+      }
+      const mean = sum / n;
+      return sum2 / n - mean * mean;
+    }
+
     async localizeOnce() {
       if (this.busy || !this.serverReady) return false;
 
       this.busy = true;
-      this.attempts++;
       this.onStatus('pending');
       const t0 = performance.now();
 
@@ -310,6 +330,20 @@
         if (!snap) { Log.warn('[immersal] 카메라 프레임을 못 받음'); this.onStatus('fail'); return false; }
 
         const {gray, cols, rows, cam} = snap;
+
+        // 흐린 프레임은 보내지 않는다 — 걷는 중 모션블러 프레임은 매치가 있어도
+        // PnP 가 무너져 어차피 실패한다 (실측: 실패 7건 중 4건). 왕복 2~3초를
+        // 아끼고 다음 선명한 프레임을 기다리는 쪽이 성공률·체감 속도 모두 낫다.
+        const sharp = this._sharpness(gray, cols, rows);
+        if (this._sharpHist.length >= 5 && sharp < median(this._sharpHist) * 0.45) {
+          this.blurSkipped++;
+          Log.info(`[측위] 흐린 프레임 건너뜀 (선명도 ${sharp.toFixed(0)} < 기준 ${(median(this._sharpHist) * 0.45).toFixed(0)}, 누적 ${this.blurSkipped})`);
+          return false;
+        }
+        this._sharpHist.push(sharp);
+        if (this._sharpHist.length > 12) this._sharpHist.shift();
+
+        this.attempts++;
         this._lastDims = {cols, rows};
         const b64 = await window.PNGEncoder.encodeGray8(gray, cols, rows);
         const {fx, fy, ox, oy} = this._intrinsics(cols, rows);

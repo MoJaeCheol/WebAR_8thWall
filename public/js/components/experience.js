@@ -551,7 +551,7 @@ AFRAME.registerComponent('dora-experience', {
       d && d.ready
         ? `일치=${d.agreePos.toFixed(2)}m/${d.agreeDeg.toFixed(1)}° 쌍=${d.pairs} 기준선=${d.baseline.toFixed(1)}m`
         : '',
-      `흔들림=${L ? (L.lastShift * 100).toFixed(0) : '-'}cm 무시=${L ? L.rejected : 0}회`,
+      `흔들림=${L ? (L.lastShift * 100).toFixed(0) : '-'}cm 무시=${L ? L.rejected : 0}회 흐림스킵=${L ? L.blurSkipped : 0}회`,
       `특징점=${document.querySelector('#devPoints').textContent}`,
     ].filter(Boolean);
     const text = lines.join('\n');

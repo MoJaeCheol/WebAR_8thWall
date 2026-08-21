@@ -14,7 +14,9 @@ import numpy as np
 from ..common import geometry, mapio
 from ..builder.features import SiftProvider
 
-MIN_INLIERS = 20
+# 실측 통계(2026-08-21, 21질의)에서 19인라이어 정답이 게이트에 걸렸다 → 15로 완화.
+# 오수락 위험은 클라이언트의 이상치 거부(1.5m) + 연속 합의 복구가 받친다.
+MIN_INLIERS = 15
 MIN_INLIER_RATIO = 0.12
 RATIO_TEST = 0.8
 PNP_REPROJ_PX = 5.0
