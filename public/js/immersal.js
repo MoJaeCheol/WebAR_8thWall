@@ -107,6 +107,7 @@
       this.outlierMeters = 1.5;
       this.lastShift = 0;
       this.rejected = 0;
+      this._outlierPoses = [];      // 최근 이상치들의 제안 위치 — 합의 재정렬 판단용
 
       // 초점거리 보정.
       // reality.intrinsics 는 화면에 맞춰 잘린 렌더 투영이라 그대로 쓰면 과대평가된다.
@@ -510,15 +511,37 @@
         o.scale.setScalar(k);
         this.applied = true;
         this.lastShift = 0;
+        this._outlierPoses = [];
         Log.info(`[immersal] ${this.conventionName()} → 최초 정렬 (${f(pos.x)}, ${f(pos.y)}, ${f(pos.z)}) 배율 ${k.toFixed(3)} 기울기 ${tilt.toFixed(0)}°`);
       } else {
         const shift = pos.distanceTo(o.position);
         this.lastShift = shift;
         if (shift > this.outlierMeters) {
           this.rejected++;
+          // 이상치가 서로 뭉치면 "튄 건 측위가 아니라 내 현재 정렬" 이다 —
+          // 첫 측위가 반복 구조(비슷한 책상 열 등)에 오인식으로 붙은 경우,
+          // 이후의 맞는 측위가 전부 이상치로 무시되는 정체 상태에 빠진다.
+          // 연속 3개가 서로 0.5m 안에서 합의하면 그쪽으로 재정렬해 복구한다.
+          this._outlierPoses.push(pos.clone());
+          if (this._outlierPoses.length > 4) this._outlierPoses.shift();
+          const r = this._outlierPoses.slice(-3);
+          if (r.length === 3
+              && r[0].distanceTo(r[1]) < 0.5
+              && r[1].distanceTo(r[2]) < 0.5
+              && r[0].distanceTo(r[2]) < 0.5) {
+            Log.warn(`[정렬] 연속 이상치 3개 합의 — 현재 정렬을 버리고 ${shift.toFixed(2)}m 재정렬 (오인식 복구)`);
+            o.position.copy(pos);
+            o.quaternion.copy(quat);
+            o.scale.setScalar(k);
+            this._outlierPoses = [];
+            this.lastShift = 0;
+            o.updateMatrixWorld(true);
+            return;
+          }
           Log.warn(`[immersal] 이상치 무시 — 정렬이 ${shift.toFixed(2)}m 튐 (누적 ${this.rejected})`);
           return;
         }
+        this._outlierPoses = [];   // 정상 갱신이 들어오면 합의 후보 리셋
         o.position.lerp(pos, this.smoothing);
         o.quaternion.slerp(quat, this.smoothing);
         o.scale.lerp(new THREE.Vector3(k, k, k), this.smoothing);
