@@ -9,8 +9,23 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { loader.style.display = 'none'; }, 500);
   };
 
-  btn.addEventListener('click', dismiss);
-  loader.addEventListener('click', dismiss);
+  // iOS 는 IMU(가속도·자이로) 접근에 명시적 권한이 필요하고, 사용자 제스처 안에서만
+  // 요청할 수 있다. IMU 없이는 SLAM 스케일이 영영 안 잡힌다 — 시작 탭에서 요청한다.
+  const askMotion = () => {
+    try {
+      if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission()
+          .then((s) => Log.info('[권한] 모션 센서:', s))
+          .catch((e) => Log.warn('[권한] 모션 센서 요청 실패:', e.message));
+      }
+      if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().catch(() => {});
+      }
+    } catch (e) {}
+  };
+
+  btn.addEventListener('click', () => { askMotion(); dismiss(); });
+  loader.addEventListener('click', () => { askMotion(); dismiss(); });
 
   // 카메라가 이미 붙었으면 시작 화면을 붙잡아 둘 이유가 없다.
   document.querySelector('a-scene').addEventListener('realityready', () => setTimeout(dismiss, 400));
